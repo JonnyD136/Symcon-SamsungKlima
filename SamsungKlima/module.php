@@ -40,6 +40,10 @@ class SamsungKlima extends IPSModule
 
     private const MODE_COOL = 1;
 
+    // Regelmodus
+    private const CTRL_TWOPOINT = 0;   // Ein/Aus mit Totzone
+    private const CTRL_SETPOINT = 1;   // Sollwert-Folgen (Inverter moduliert)
+
     private const WINDFREE_ON  = 9;
     private const WINDFREE_OFF = 0;
 
@@ -55,12 +59,17 @@ class SamsungKlima extends IPSModule
         $this->RegisterPropertyInteger('Mittelgruppe', 0);
         $this->RegisterPropertyString('RoomName', '');
 
-        $this->RegisterPropertyInteger('SollMin', 16);
+        $this->RegisterPropertyInteger('SollMin', 18);
         $this->RegisterPropertyInteger('SollMax', 30);
 
         $this->RegisterPropertyInteger('ExtTempVarID', 0);
         $this->RegisterPropertyInteger('ExtSetpointVarID', 0);
+        $this->RegisterPropertyInteger('ControlMode', self::CTRL_SETPOINT);
         $this->RegisterPropertyFloat('Deadband', 1.0);
+        $this->RegisterPropertyFloat('OffReserve', 1.0);
+        $this->RegisterPropertyBoolean('BiasEnabled', false);
+        $this->RegisterPropertyFloat('BiasKi', 0.05);
+        $this->RegisterPropertyFloat('BiasLimit', 3.0);
         $this->RegisterPropertyInteger('ReleaseVarID', 0);
         $this->RegisterPropertyBoolean('TurnOffWhenInactive', true);
         $this->RegisterPropertyInteger('MinToggle', 180);
@@ -90,6 +99,9 @@ class SamsungKlima extends IPSModule
         $this->RegisterAttributeInteger('LastToggle', 0);
         $this->RegisterAttributeInteger('LastWarm', -1);
         $this->RegisterAttributeInteger('LastWindowOff', 0);
+        $this->RegisterAttributeFloat('Bias', 0.0);
+        $this->RegisterAttributeInteger('BiasLast', 0);
+        $this->RegisterAttributeFloat('LastSollWritten', -999.0);
         $this->RegisterAttributeInteger('PVActive', 0);      // 0/1: PV-Vorkühlung aktiv
         $this->RegisterAttributeInteger('PVCandSince', 0);   // seit wann Umschalt-Kandidat
 
@@ -327,20 +339,84 @@ class SamsungKlima extends IPSModule
         if ($ist === null) {
             return;
         }
-        $soll = $this->EffectiveSetpoint();
-        $half = $this->ReadPropertyFloat('Deadband') / 2.0;
+        $target  = $this->EffectiveSetpoint();                 // Wunsch-Soll inkl. PV-Absenkung
+        $half    = $this->ReadPropertyFloat('Deadband') / 2.0;
+        $powerOn = (bool) $this->GetValueSafe('Power', false);
+        $canToggle = (time() - $this->ReadAttributeInteger('LastToggle'))
+            >= $this->ReadPropertyInteger('MinToggle');
 
-        if (time() - $this->ReadAttributeInteger('LastToggle') < $this->ReadPropertyInteger('MinToggle')) {
+        if ($this->ReadPropertyInteger('ControlMode') === self::CTRL_SETPOINT) {
+            // Sollwert-Folgen: Inverter moduliert selbst auf den Wunsch-Sollwert.
+            if (!$powerOn) {
+                if ($ist >= $target + $half && $canToggle) {
+                    $this->WriteAttributeInteger('BiasLast', time());
+                    $this->WriteSamsungSoll($this->ComputeSamsungSoll($target));
+                    $this->RegulateSwitch(true);
+                }
+            } elseif ($ist <= $target - $this->ReadPropertyFloat('OffReserve') && $canToggle) {
+                $this->RegulateSwitch(false);
+            } else {
+                // an: Sollwert nachführen + Sensor-Offset langsam trimmen (kein Takten)
+                $this->UpdateBias($ist);
+                $this->WriteSamsungSoll($this->ComputeSamsungSoll($target));
+            }
+        } else {
+            // Zweipunkt: Kompressor per Ein/Aus mit Totzone
+            if ($canToggle) {
+                if (!$powerOn && $ist >= $target + $half) {
+                    $this->RegulateSwitch(true);
+                } elseif ($powerOn && $ist <= $target - $half) {
+                    $this->RegulateSwitch(false);
+                }
+            }
+        }
+    }
+
+    /** Samsung-Sollwert: Ziel − Bias, auf Geräte-Grenzen geklammert, 0,5-K-Raster. */
+    private function ComputeSamsungSoll(float $target): float
+    {
+        $v = $target;
+        if ($this->ReadPropertyBoolean('BiasEnabled')) {
+            $v -= $this->ReadAttributeFloat('Bias');
+        }
+        $min = (float) $this->ReadPropertyInteger('SollMin');
+        $max = (float) $this->ReadPropertyInteger('SollMax');
+        $v = max($min, min($max, $v));
+        return round($v * 2) / 2;
+    }
+
+    /** Samsung-Sollwert nur bei Änderung schreiben (jeder Write = Steuerbefehl). */
+    private function WriteSamsungSoll(float $ss): void
+    {
+        if (abs($ss - $this->ReadAttributeFloat('LastSollWritten')) < 0.25) {
             return;
         }
+        $this->WriteKNX('Setpoint', $ss);
+        $this->WriteAttributeFloat('LastSollWritten', $ss);
+    }
 
-        $powerOn = (bool) $this->GetValueSafe('Power', false);
-        // Kühlen: Ein wenn zu warm, Aus wenn ausreichend kühl
-        if (!$powerOn && $ist >= $soll + $half) {
-            $this->RegulateSwitch(true);
-        } elseif ($powerOn && $ist <= $soll - $half) {
-            $this->RegulateSwitch(false);
+    /** Langsames I-Trim: treibt die Wandtemperatur auf den Wand-Soll (Sensor-Offset). */
+    private function UpdateBias(float $ist): void
+    {
+        if (!$this->ReadPropertyBoolean('BiasEnabled')) {
+            return;
         }
+        $now  = time();
+        $last = $this->ReadAttributeInteger('BiasLast');
+        if ($last <= 0) {
+            $this->WriteAttributeInteger('BiasLast', $now);
+            return;
+        }
+        $dtMin = ($now - $last) / 60.0;
+        if ($dtMin <= 0) {
+            return;
+        }
+        $err  = $ist - $this->CurrentSoll();   // >0 = zu warm → Samsung-Soll absenken
+        $bias = $this->ReadAttributeFloat('Bias') + $this->ReadPropertyFloat('BiasKi') * $err * $dtMin;
+        $lim  = $this->ReadPropertyFloat('BiasLimit');
+        $bias = max(-$lim, min($lim, $bias));
+        $this->WriteAttributeFloat('Bias', $bias);
+        $this->WriteAttributeInteger('BiasLast', $now);
     }
 
     private function RegulateSwitch(bool $on): void
@@ -354,6 +430,7 @@ class SamsungKlima extends IPSModule
         } else {
             $this->WriteKNX('Power', false);
             $this->SetValueIfChanged('Power', false);
+            $this->WriteAttributeFloat('LastSollWritten', -999.0);
         }
         $this->WriteAttributeInteger('LastToggle', time());
         $this->LogMessage(sprintf('Thermostat: %s (Ist %.1f / Soll %.1f)',
@@ -367,6 +444,7 @@ class SamsungKlima extends IPSModule
             $this->WriteKNX('Power', false);
             $this->SetValueIfChanged('Power', false);
             $this->WriteAttributeInteger('LastToggle', time());
+            $this->WriteAttributeFloat('LastSollWritten', -999.0);
         }
     }
 
