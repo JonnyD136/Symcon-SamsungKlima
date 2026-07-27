@@ -1,11 +1,11 @@
 {
     "id": "{B7E4B1A0-2C3D-4E5F-9A6B-1D2E3F4A5B6C}",
-    "author": "FACE Communication-Equipment GmbH",
+    "author": "Jean-Luc Doijen",
     "name": "FACE Samsung Klima",
     "title": "FACE Samsung Klima (MDT/KNX)",
     "description": "Logisches Samsung-FJM-Klimagerät je Raum – bündelt die KNX-Gruppenadressen des MDT SCN-MBGRTU.01 zu einem Gerät mit Profilen und Steuerlogik",
     "url": "https://github.com/JonnyD136/Symcon-SamsungKlima",
-    "version": "0.2",
-    "build": 2,
+    "version": "1.0",
+    "build": 3,
     "date": 0
 }

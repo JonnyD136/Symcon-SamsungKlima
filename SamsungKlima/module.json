@@ -2,7 +2,7 @@
     "id": "{C1F2E3D4-5A6B-7C8D-9E0F-1A2B3C4D5E6F}",
     "name": "SamsungKlima",
     "type": 3,
-    "vendor": "FACE",
+    "vendor": "FACE GmbH",
     "aliases": ["Samsung Klima", "Samsung FJM", "MDT Klima", "Klima Raum"],
     "parentRequirements": [],
     "childRequirements": [],

@@ -2,7 +2,7 @@
     "id": "{D2A3B4C5-6E7F-8A9B-0C1D-2E3F4A5B6C7D}",
     "name": "SamsungKlimaZentrale",
     "type": 3,
-    "vendor": "FACE",
+    "vendor": "FACE GmbH",
     "aliases": ["Klima Zentrale", "Samsung Klima Zentrale", "Kühlfreigabe"],
     "parentRequirements": [],
     "childRequirements": [],
