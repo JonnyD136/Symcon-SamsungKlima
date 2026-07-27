@@ -89,6 +89,7 @@ class SamsungKlima extends IPSModule
         $this->RegisterAttributeString('WatchedVars', '[]');
         $this->RegisterAttributeInteger('LastToggle', 0);
         $this->RegisterAttributeInteger('LastWarm', -1);
+        $this->RegisterAttributeInteger('LastWindowOff', 0);
         $this->RegisterAttributeInteger('PVActive', 0);      // 0/1: PV-Vorkühlung aktiv
         $this->RegisterAttributeInteger('PVCandSince', 0);   // seit wann Umschalt-Kandidat
 
@@ -384,7 +385,16 @@ class SamsungKlima extends IPSModule
     public function WindowGuard()
     {
         if ($this->WindowOpen()) {
-            $this->EnsureOff();
+            // Unbedingt AUS – auch wenn der interne Power-Status (noch) falsch/veraltet
+            // ist. Wiederhol-Sperre (30 s) gegen Bus-Spam bei zyklischen Kontakt-Telegrammen.
+            $now = time();
+            if ((bool) $this->GetValueSafe('Power', false)
+                || ($now - $this->ReadAttributeInteger('LastWindowOff')) > 30) {
+                $this->WriteKNX('Power', false);
+                $this->SetValueIfChanged('Power', false);
+                $this->WriteAttributeInteger('LastWindowOff', $now);
+                $this->WriteAttributeInteger('LastToggle', $now);
+            }
         } elseif ($this->ReadPropertyBoolean('ThermostatEnabled')) {
             $this->Regulate();
         }
