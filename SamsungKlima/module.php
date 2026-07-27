@@ -125,8 +125,11 @@ class SamsungKlima extends IPSModule
             $this->Regulate();
             return;
         }
+        if ($SenderID === $this->ReadPropertyInteger('WindowVarID')) {
+            $this->WindowGuard();
+            return;
+        }
         if ($SenderID === $this->ReadPropertyInteger('ReleaseVarID')
-            || $SenderID === $this->ReadPropertyInteger('WindowVarID')
             || $SenderID === $this->ReadPropertyInteger('PVSurplusVarID')) {
             $this->Regulate();
             return;
@@ -259,6 +262,12 @@ class SamsungKlima extends IPSModule
     /** Einschalten: erst Betriebsart (Kühlen) schreiben, dann Ein (FJM-Regel). */
     private function SetPower(bool $on): void
     {
+        if ($on && $this->WindowOpen()) {
+            // Fenster offen → Einschalten blockieren, sicher aus
+            $this->WriteKNX('Power', false);
+            $this->SetValueIfChanged('Power', false);
+            return;
+        }
         if ($on) {
             $this->WriteKNX('Mode', self::MODE_COOL);
             $this->SetValueIfChanged('Mode', self::MODE_COOL);
@@ -361,6 +370,20 @@ class SamsungKlima extends IPSModule
             $this->WriteKNX('Power', false);
             $this->SetValueIfChanged('Power', false);
             $this->WriteAttributeInteger('LastToggle', time());
+        }
+    }
+
+    /**
+     * Fenster-Wächter – unabhängig vom Thermostat. Fenster offen → Klima aus.
+     * Fenster zu → im Thermostatbetrieb Regelung wieder aufnehmen (im Handbetrieb
+     * bleibt die Klima aus, bis der Nutzer sie wieder einschaltet).
+     */
+    public function WindowGuard()
+    {
+        if ($this->WindowOpen()) {
+            $this->EnsureOff();
+        } elseif ($this->ReadPropertyBoolean('ThermostatEnabled')) {
+            $this->Regulate();
         }
     }
 
