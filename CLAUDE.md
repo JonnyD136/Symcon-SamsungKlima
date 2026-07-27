@@ -1,4 +1,4 @@
-# CLAUDE.md — FACE Samsung Klima (MDT/KNX)
+# CLAUDE.md — Samsung Klima (MDT/KNX)
 
 ## Übersicht
 Standalone Device (Type 3), Prefix **SAMK**, **kein Parent**. Ein logisches

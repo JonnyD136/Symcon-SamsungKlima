@@ -1,4 +1,4 @@
-# FACE Samsung Klima (MDT/KNX)
+# Samsung Klima (MDT/KNX)
 
 Logisches Samsung-FJM-Klimagerät **je Raum** für IP-Symcon. Bündelt die vom
 MDT SCN-MBGRTU.01 auf KNX (Hauptgruppe 4) gelegten Gruppenadressen zu einem
