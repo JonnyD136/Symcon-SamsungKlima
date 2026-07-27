@@ -24,8 +24,9 @@
             "type": "ExpansionPanel",
             "caption": "Thermostat-Regelung (Kühlen)",
             "items": [
-                { "type": "CheckBox", "name": "ThermostatEnabled", "caption": "Regelung aktivieren (Variable \"Regelung aktiv\" anlegen)" },
-                { "type": "SelectVariable", "name": "ExtTempVarID", "caption": "Ist-Temperatur-Quelle (z. B. Wandtaster). Leer = Samsung-Isttemperatur" },
+                { "type": "Label", "caption": "Ein/Aus der Regelung erfolgt über die Variable \"Regelung aktiv\" (Schalter in der Instanz, z. B. per Szene/Zeitplan/Anwesenheit)." },
+                { "type": "SelectVariable", "name": "ExtTempVarID", "caption": "Ist-Temperatur-Quelle (KNX-Wandthermostat). Leer = Samsung-Isttemperatur" },
+                { "type": "SelectVariable", "name": "ExtSetpointVarID", "caption": "Soll-Quelle (KNX-Wandthermostat). Leer = Modul-Sollwert" },
                 { "type": "NumberSpinner", "name": "Deadband", "caption": "Totzone (K)", "digits": 1, "minimum": 0.2, "maximum": 10 },
                 { "type": "SelectVariable", "name": "ReleaseVarID", "caption": "Globale Kühlfreigabe (Variable \"Freigabe\" der Klima Zentrale). Leer = immer freigegeben" },
                 { "type": "CheckBox", "name": "TurnOffWhenInactive", "caption": "Klima ausschalten, wenn Regelung/Freigabe inaktiv (Abwesenheit)" },

@@ -58,8 +58,8 @@ class SamsungKlima extends IPSModule
         $this->RegisterPropertyInteger('SollMin', 16);
         $this->RegisterPropertyInteger('SollMax', 30);
 
-        $this->RegisterPropertyBoolean('ThermostatEnabled', false);
         $this->RegisterPropertyInteger('ExtTempVarID', 0);
+        $this->RegisterPropertyInteger('ExtSetpointVarID', 0);
         $this->RegisterPropertyFloat('Deadband', 1.0);
         $this->RegisterPropertyInteger('ReleaseVarID', 0);
         $this->RegisterPropertyBoolean('TurnOffWhenInactive', true);
@@ -121,7 +121,8 @@ class SamsungKlima extends IPSModule
             return;
         }
 
-        if ($SenderID === $this->ReadPropertyInteger('ExtTempVarID')) {
+        if ($SenderID === $this->ReadPropertyInteger('ExtTempVarID')
+            || $SenderID === $this->ReadPropertyInteger('ExtSetpointVarID')) {
             $this->UpdateWarmCold();
             $this->Regulate();
             return;
@@ -188,6 +189,7 @@ class SamsungKlima extends IPSModule
 
         $watched = array_map('intval', array_keys($statMap));
         foreach ([$this->ReadPropertyInteger('ExtTempVarID'),
+                  $this->ReadPropertyInteger('ExtSetpointVarID'),
                   $this->ReadPropertyInteger('ReleaseVarID'),
                   $this->ReadPropertyInteger('WindowVarID'),
                   $this->ReadPropertyInteger('PVSurplusVarID')] as $extra) {
@@ -201,12 +203,8 @@ class SamsungKlima extends IPSModule
         }
         $this->WriteAttributeString('WatchedVars', json_encode($watched));
 
-        // Timer: für Sicherheits-Check und für die zeitbasierte PV-Zustandsmaschine
-        $iv = $this->ReadPropertyInteger('RegInterval');
-        $needTimer = $this->ReadPropertyBoolean('ThermostatEnabled')
-            && ($iv > 0 || $this->ReadPropertyBoolean('PVEnabled'));
-        $sec = $iv > 0 ? $iv : 60;
-        $this->SetTimerInterval('RegTimer', $needTimer ? $sec * 1000 : 0);
+        // Timer: für Sicherheits-Check und die zeitbasierte PV-Zustandsmaschine
+        $this->UpdateTimer();
 
         $ok = isset($bySub[self::STAT_SUB['Power']]) && isset($bySub[self::STAT_SUB['RoomTemp']]);
         $this->SetStatus($ok ? self::STATUS_OK : self::STATUS_NO_GA);
@@ -286,9 +284,8 @@ class SamsungKlima extends IPSModule
 
     private function SetRegActive(bool $on): void
     {
-        if ($this->HasRegActive()) {
-            $this->SetValueIfChanged('RegActive', $on);
-        }
+        $this->SetValueIfChanged('RegActive', $on);
+        $this->UpdateTimer();
         if ($on) {
             $this->Regulate();
         } elseif ($this->ReadPropertyBoolean('TurnOffWhenInactive')) {
@@ -302,12 +299,8 @@ class SamsungKlima extends IPSModule
 
     public function Regulate()
     {
-        if (!$this->ReadPropertyBoolean('ThermostatEnabled')) {
-            return;
-        }
-
-        // per-Raum-Freigabe
-        if ($this->HasRegActive() && !GetValue($this->GetIDForIdent('RegActive'))) {
+        // Master-Schalter: Regelung nur, wenn die Variable "Regelung aktiv" an ist
+        if (!(bool) $this->GetValueSafe('RegActive', false)) {
             return;
         }
 
@@ -364,7 +357,7 @@ class SamsungKlima extends IPSModule
         }
         $this->WriteAttributeInteger('LastToggle', time());
         $this->LogMessage(sprintf('Thermostat: %s (Ist %.1f / Soll %.1f)',
-            $on ? 'EIN' : 'AUS', $this->CurrentIst() ?? 0, $this->GetValueSafe('Setpoint', 0)), KL_MESSAGE);
+            $on ? 'EIN' : 'AUS', $this->CurrentIst() ?? 0, $this->CurrentSoll()), KL_MESSAGE);
     }
 
     /** Klima sicher ausschalten (Fenster/Freigabe), ohne Anti-Takt-Sperre. */
@@ -395,7 +388,7 @@ class SamsungKlima extends IPSModule
                 $this->WriteAttributeInteger('LastWindowOff', $now);
                 $this->WriteAttributeInteger('LastToggle', $now);
             }
-        } elseif ($this->ReadPropertyBoolean('ThermostatEnabled')) {
+        } else {
             $this->Regulate();
         }
     }
@@ -413,7 +406,7 @@ class SamsungKlima extends IPSModule
     /** Kühl-Sollwert inkl. PV-Überschuss-Absenkung (Vorkühlen). */
     private function EffectiveSetpoint(): float
     {
-        $soll = (float) $this->GetValueSafe('Setpoint', 24.0);
+        $soll = $this->CurrentSoll();
         if ($this->PVActive()) {
             $soll = max($this->ReadPropertyFloat('PVMinTemp'),
                         $soll - $this->ReadPropertyFloat('PVOffset'));
@@ -483,6 +476,29 @@ class SamsungKlima extends IPSModule
         return true;
     }
 
+    /** Ziel-Soll: Soll vom KNX-Wandthermostat (falls gewählt), sonst Modul-Sollwert. */
+    private function CurrentSoll(): float
+    {
+        $ext = $this->ReadPropertyInteger('ExtSetpointVarID');
+        if ($ext > 0 && IPS_VariableExists($ext)) {
+            $v = (float) GetValue($ext);
+            if ($v >= 5 && $v <= 40) {
+                return $v;
+            }
+        }
+        return (float) $this->GetValueSafe('Setpoint', 24.0);
+    }
+
+    /** Regel-Timer je nach "Regelung aktiv" + Intervall/PV setzen. */
+    private function UpdateTimer(): void
+    {
+        $iv  = $this->ReadPropertyInteger('RegInterval');
+        $reg = (bool) $this->GetValueSafe('RegActive', false);
+        $need = $reg && ($iv > 0 || $this->ReadPropertyBoolean('PVEnabled'));
+        $sec = $iv > 0 ? $iv : 60;
+        $this->SetTimerInterval('RegTimer', $need ? $sec * 1000 : 0);
+    }
+
     private function CurrentIst(): ?float
     {
         $ext = $this->ReadPropertyInteger('ExtTempVarID');
@@ -512,7 +528,7 @@ class SamsungKlima extends IPSModule
         if ($ist === null) {
             return;
         }
-        $soll = (float) $this->GetValueSafe('Setpoint', 24.0);
+        $soll = $this->CurrentSoll();
         $margin = $this->ReadPropertyFloat('WarmMargin');
 
         $last = $this->ReadAttributeInteger('LastWarm'); // -1 unbekannt, 0 kalt, 1 warm
@@ -620,7 +636,7 @@ class SamsungKlima extends IPSModule
 
     private function HasRegActive(): bool
     {
-        return $this->ReadPropertyBoolean('ThermostatEnabled') && @$this->GetIDForIdent('RegActive') > 0;
+        return @$this->GetIDForIdent('RegActive') > 0;
     }
 
     private function GetValueSafe(string $ident, $default)
@@ -689,12 +705,8 @@ class SamsungKlima extends IPSModule
         $this->RegisterVariableBoolean('WindFree', 'Wind-Free', '~Switch', 70);
         $this->EnableAction('WindFree');
 
-        if ($this->ReadPropertyBoolean('ThermostatEnabled')) {
-            $this->RegisterVariableBoolean('RegActive', 'Regelung aktiv', '~Switch', 80);
-            $this->EnableAction('RegActive');
-        } elseif (@$this->GetIDForIdent('RegActive')) {
-            $this->UnregisterVariable('RegActive');
-        }
+        $this->RegisterVariableBoolean('RegActive', 'Regelung aktiv', '~Switch', 80);
+        $this->EnableAction('RegActive');
 
         $this->RegisterVariableBoolean('Verbunden', 'Verbunden', '~Switch', 90);
         $this->RegisterVariableString('ErrorText', 'Fehler', '', 100);
