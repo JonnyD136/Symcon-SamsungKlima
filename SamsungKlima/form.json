@@ -1,0 +1,77 @@
+{
+    "elements": [
+        {
+            "type": "Label",
+            "caption": "Bündelt die KNX-Gruppenadressen eines Samsung-Innengeräts (über MDT SCN-MBGRTU.01) zu einem logischen Klimagerät (nur Kühlen). Die Gruppenadressen müssen zuvor per KNX Configurator in Symcon angelegt sein (HG 4). Das Modul findet die passenden KNX-Instanzen anhand von Haupt-/Mittelgruppe automatisch."
+        },
+        {
+            "type": "RowLayout",
+            "items": [
+                { "type": "NumberSpinner", "name": "Hauptgruppe", "caption": "Hauptgruppe", "minimum": 0, "maximum": 31 },
+                { "type": "NumberSpinner", "name": "Mittelgruppe", "caption": "Mittelgruppe (Raum 1–5)", "minimum": 0, "maximum": 7 },
+                { "type": "ValidationTextBox", "name": "RoomName", "caption": "Raumname (optional)" }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "Sollwertgrenzen",
+            "items": [
+                { "type": "NumberSpinner", "name": "SollMin", "caption": "Minimum (°C)", "minimum": 5, "maximum": 40 },
+                { "type": "NumberSpinner", "name": "SollMax", "caption": "Maximum (°C)", "minimum": 5, "maximum": 40 }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "Thermostat-Regelung (Kühlen)",
+            "items": [
+                { "type": "CheckBox", "name": "ThermostatEnabled", "caption": "Regelung aktivieren (Variable \"Regelung aktiv\" anlegen)" },
+                { "type": "SelectVariable", "name": "ExtTempVarID", "caption": "Ist-Temperatur-Quelle (z. B. Wandtaster). Leer = Samsung-Isttemperatur" },
+                { "type": "NumberSpinner", "name": "Deadband", "caption": "Totzone (K)", "digits": 1, "minimum": 0.2, "maximum": 10 },
+                { "type": "SelectVariable", "name": "ReleaseVarID", "caption": "Globale Kühlfreigabe (Variable \"Freigabe\" der Klima Zentrale). Leer = immer freigegeben" },
+                { "type": "CheckBox", "name": "TurnOffWhenInactive", "caption": "Klima ausschalten, wenn Regelung/Freigabe inaktiv (Abwesenheit)" },
+                { "type": "NumberSpinner", "name": "MinToggle", "caption": "Mindest-Umschaltzeit (Sekunden)", "minimum": 0, "maximum": 3600 },
+                { "type": "NumberSpinner", "name": "RegInterval", "caption": "Sicherheits-Check-Intervall (Sekunden, 0 = aus)", "minimum": 0, "maximum": 3600 }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "Fenster-Sperre",
+            "items": [
+                { "type": "SelectVariable", "name": "WindowVarID", "caption": "Fensterkontakt (offen sperrt Kühlung). Bei mehreren: Sammelvariable" },
+                { "type": "CheckBox", "name": "WindowInverted", "caption": "Kontakt invertiert (true = geschlossen)" }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "Warm/Kalt-Anzeige am Taster",
+            "items": [
+                { "type": "SelectVariable", "name": "HeatCoolStatusVarID", "caption": "KNX-GA für Warm/Kalt-Anzeige (Value der KNX-DPT-Instanz)" },
+                { "type": "CheckBox", "name": "HeatCoolInverted", "caption": "Polarität invertieren (z. B. DPT 1.100: 0 = Kühlen)" },
+                { "type": "NumberSpinner", "name": "WarmMargin", "caption": "Umschalt-Schwelle warm/kalt (K)", "digits": 1, "minimum": 0.1, "maximum": 5 }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "PV-Überschuss-Vorkühlung (optional)",
+            "items": [
+                { "type": "CheckBox", "name": "PVEnabled", "caption": "PV-Überschuss in diesen Raum kühlen (z. B. Schlafzimmer ja, Büro nein)" },
+                { "type": "SelectVariable", "name": "PVSurplusVarID", "caption": "PV-Überschuss-Variable (W) – z. B. \"Netz Leistung\" aus dem Sungrow-Modul" },
+                { "type": "CheckBox", "name": "PVGridSign", "caption": "Variable ist Netzleistung (negativ = Einspeisung/Überschuss)" },
+                { "type": "NumberSpinner", "name": "PVThreshold", "caption": "Ausreichend: Überschuss ≥ erwartete Klima-Leistung (W)", "digits": 0, "minimum": 0, "maximum": 20000 },
+                { "type": "NumberSpinner", "name": "PVHysteresis", "caption": "Abschalt-Hysterese (W unter Schwelle)", "digits": 0, "minimum": 0, "maximum": 5000 },
+                { "type": "NumberSpinner", "name": "PVOnDelay", "caption": "Anhaltend: Mindestdauer über Schwelle bis EIN (s)", "minimum": 0, "maximum": 3600 },
+                { "type": "NumberSpinner", "name": "PVOffDelay", "caption": "Mindestdauer unter Schwelle bis AUS (s)", "minimum": 0, "maximum": 3600 },
+                { "type": "NumberSpinner", "name": "PVOffset", "caption": "Soll-Absenkung bei Überschuss (K)", "digits": 1, "minimum": 0.5, "maximum": 6 },
+                { "type": "NumberSpinner", "name": "PVMinTemp", "caption": "Untergrenze Vorkühlung (°C)", "digits": 1, "minimum": 16, "maximum": 26 }
+            ]
+        }
+    ],
+    "actions": [
+        { "type": "Button", "caption": "Gruppenadressen neu einlesen", "onClick": "SAMK_Discover($id);" },
+        { "type": "Label", "caption": "Nach dem Einlesen zeigt der Instanz-Status, ob alle Objekte gefunden wurden." }
+    ],
+    "status": [
+        { "code": 102, "icon": "active", "caption": "Aktiv – Gruppenadressen gefunden" },
+        { "code": 201, "icon": "inactive", "caption": "Gruppenadressen nicht gefunden – bitte Configurator-Import und Haupt-/Mittelgruppe prüfen" }
+    ]
+}

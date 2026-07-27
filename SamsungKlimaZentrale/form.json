@@ -1,0 +1,35 @@
+{
+    "elements": [
+        {
+            "type": "Label",
+            "caption": "Zentrale Kühlfreigabe für alle Samsung-Klima-Rauminstanzen. Stellt die Variable \"Freigabe\" bereit, die jede Raum-Instanz als \"Globale Kühlfreigabe\" referenziert. Da die FJM sich einen Kältekreis teilt, gilt der Modus global für alle Räume."
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "Automatik (Aussentemperatur)",
+            "items": [
+                { "type": "SelectVariable", "name": "OutTempVarID", "caption": "Aussentemperatur-Variable" },
+                { "type": "NumberSpinner", "name": "OutThreshold", "caption": "Freigabe-Schwelle (°C)", "digits": 1, "minimum": 0, "maximum": 40 },
+                { "type": "NumberSpinner", "name": "OutHysteresis", "caption": "Hysterese (K)", "digits": 1, "minimum": 0.1, "maximum": 5 }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "Anwesenheit",
+            "items": [
+                { "type": "SelectVariable", "name": "PresenceVarID", "caption": "Anwesenheits-Variable (optional)" },
+                { "type": "CheckBox", "name": "PresenceInverted", "caption": "Invertiert (true = abwesend)" },
+                { "type": "CheckBox", "name": "BlockWhenAway", "caption": "Bei Abwesenheit Kühlung sperren" }
+            ]
+        },
+        {
+            "type": "NumberSpinner", "name": "CheckInterval", "caption": "Prüf-Intervall (Sekunden, 0 = aus)", "minimum": 0, "maximum": 3600
+        }
+    ],
+    "actions": [
+        { "type": "Button", "caption": "Jetzt neu bewerten", "onClick": "SAMKZ_Evaluate($id);" }
+    ],
+    "status": [
+        { "code": 102, "icon": "active", "caption": "Aktiv" }
+    ]
+}
