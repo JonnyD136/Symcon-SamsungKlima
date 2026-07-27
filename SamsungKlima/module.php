@@ -216,6 +216,9 @@ class SamsungKlima extends IPSModule
             }
             $this->UpdateWarmCold();
         }
+
+        // Falls ein Fenster bereits offen ist, wenn das Modul (neu) startet
+        $this->WindowGuard();
     }
 
     // ═══════════════════════════════════════════════════════════════
