@@ -70,6 +70,12 @@ class SamsungKlima extends IPSModule
         $this->RegisterPropertyBoolean('BiasEnabled', false);
         $this->RegisterPropertyFloat('BiasKi', 0.05);
         $this->RegisterPropertyFloat('BiasLimit', 3.0);
+
+        // Start-Einstellungen, die die Regelung beim Einschalten setzt
+        $this->RegisterPropertyBoolean('StartApply', true);
+        $this->RegisterPropertyInteger('StartFan', 0);        // 0 Auto
+        $this->RegisterPropertyBoolean('StartSwing', false);
+        $this->RegisterPropertyBoolean('StartWindFree', false);
         $this->RegisterPropertyInteger('ReleaseVarID', 0);
         $this->RegisterPropertyBoolean('TurnOffWhenInactive', true);
         $this->RegisterPropertyInteger('MinToggle', 180);
@@ -424,6 +430,7 @@ class SamsungKlima extends IPSModule
         if ($on) {
             $this->WriteKNX('Mode', self::MODE_COOL);
             $this->SetValueIfChanged('Mode', self::MODE_COOL);
+            $this->ApplyStartSettings();
             IPS_Sleep(250);
             $this->WriteKNX('Power', true);
             $this->SetValueIfChanged('Power', true);
@@ -435,6 +442,25 @@ class SamsungKlima extends IPSModule
         $this->WriteAttributeInteger('LastToggle', time());
         $this->LogMessage(sprintf('Thermostat: %s (Ist %.1f / Soll %.1f)',
             $on ? 'EIN' : 'AUS', $this->CurrentIst() ?? 0, $this->CurrentSoll()), KL_MESSAGE);
+    }
+
+    /** Vom Regler beim Einschalten gewünschte Start-Einstellungen setzen. */
+    private function ApplyStartSettings(): void
+    {
+        if (!$this->ReadPropertyBoolean('StartApply')) {
+            return;
+        }
+        $fan = $this->ReadPropertyInteger('StartFan');
+        $this->WriteKNX('Fan', $fan);
+        $this->SetValueIfChanged('Fan', $fan);
+
+        $swing = $this->ReadPropertyBoolean('StartSwing');
+        $this->WriteKNX('Swing', $swing ? 1 : 0);
+        $this->SetValueIfChanged('Swing', $swing);
+
+        $wf = $this->ReadPropertyBoolean('StartWindFree');
+        $this->WriteKNX('WindFree', $wf ? self::WINDFREE_ON : self::WINDFREE_OFF);
+        $this->SetValueIfChanged('WindFree', $wf);
     }
 
     /** Klima sicher ausschalten (Fenster/Freigabe), ohne Anti-Takt-Sperre. */

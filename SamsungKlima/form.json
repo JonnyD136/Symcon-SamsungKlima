@@ -53,6 +53,24 @@
         },
         {
             "type": "ExpansionPanel",
+            "caption": "Start-Einstellungen der Regelung",
+            "items": [
+                { "type": "CheckBox", "name": "StartApply", "caption": "Beim Einschalten durch die Regelung diese Einstellungen setzen" },
+                {
+                    "type": "Select", "name": "StartFan", "caption": "Lüfterstufe",
+                    "options": [
+                        { "caption": "Auto", "value": 0 },
+                        { "caption": "Niedrig", "value": 1 },
+                        { "caption": "Mittel", "value": 2 },
+                        { "caption": "Hoch", "value": 3 }
+                    ]
+                },
+                { "type": "CheckBox", "name": "StartSwing", "caption": "Luftrichtung (Swing) ein" },
+                { "type": "CheckBox", "name": "StartWindFree", "caption": "Wind-Free ein" }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
             "caption": "Fenster-Sperre",
             "items": [
                 { "type": "SelectVariable", "name": "WindowVarID", "caption": "Fensterkontakt (offen sperrt Kühlung). Bei mehreren: Sammelvariable" },
