@@ -117,6 +117,7 @@ class SamsungKlima extends IPSModule
         $this->RegisterAttributeInteger('PendingPower', -1); // -1 keiner, 0/1 erwarteter Power-Status
         $this->RegisterAttributeInteger('PendingUntil', 0);  // Settle-Fenster: Status ignorieren bis
         $this->RegisterAttributeInteger('AutoArmed', 1);     // 1=scharf für Auto-EIN, 0=entschärft (Hand-Aus)
+        $this->RegisterAttributeInteger('CommSeen', 0);      // 1=Komm-Status wurde schon einmal empfangen
 
         $this->RegisterTimer('RegTimer', 0, 'SAMK_Regulate($_IPS["TARGET"]);');
     }
@@ -236,6 +237,11 @@ class SamsungKlima extends IPSModule
 
         if ($ok) {
             foreach ($statMap as $vid => $ident) {
+                // Nie empfangene GAs (VariableUpdated=0) nicht seeden – sonst würde
+                // z. B. ein stale Komm-0 fälschlich CommSeen setzen und die Regelung sperren.
+                if ((int) IPS_GetVariable((int) $vid)['VariableUpdated'] <= 0) {
+                    continue;
+                }
                 $this->MirrorStatus($ident, GetValue((int) $vid));
             }
             $this->UpdateWarmCold();
@@ -373,9 +379,11 @@ class SamsungKlima extends IPSModule
             return;
         }
 
-        // nicht auf veralteten Daten regeln
+        // Nur blockieren, wenn tatsächlich EIN Komm-Status "nicht verbunden" gemeldet
+        // wurde. Sendet die MDT das Komm-Objekt gar nicht (Sub 14 nie empfangen),
+        // darf das die Regelung NICHT dauerhaft sperren (z. B. Kind 2).
         $vid = @$this->GetIDForIdent('Verbunden');
-        if ($vid && !GetValue($vid)) {
+        if ($vid && $this->ReadAttributeInteger('CommSeen') === 1 && !GetValue($vid)) {
             return;
         }
 
@@ -761,6 +769,7 @@ class SamsungKlima extends IPSModule
                 }
                 break;
             case 'Comm':
+                $this->WriteAttributeInteger('CommSeen', 1); // ab jetzt darf Verbunden die Regelung gaten
                 $this->SetValueIfChanged('Verbunden', ((int) $value & 0x07) === 0x07);
                 break;
             case 'Error':
