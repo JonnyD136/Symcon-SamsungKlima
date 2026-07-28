@@ -6,6 +6,6 @@
     "description": "Logisches Samsung-FJM-Klimagerät je Raum – bündelt die KNX-Gruppenadressen des MDT SCN-MBGRTU.01 zu einem Gerät mit Profilen und Steuerlogik",
     "url": "https://github.com/JonnyD136/Symcon-SamsungKlima",
     "version": "1.0",
-    "build": 10,
+    "build": 11,
     "date": 0
 }

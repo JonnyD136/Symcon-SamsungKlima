@@ -47,6 +47,10 @@ class SamsungKlima extends IPSModule
     private const WINDFREE_ON  = 9;
     private const WINDFREE_OFF = 0;
 
+    // Nach einem eigenen Power-Befehl wird der KNX-Status für diese Zeit nicht
+    // gegen den Befehl gewertet (verzögerte/sporadische Rückmeldung → Anzeige-Flattern).
+    private const PENDING_SETTLE = 120;
+
     // ═══════════════════════════════════════════════════════════════
     //  LIFECYCLE
     // ═══════════════════════════════════════════════════════════════
@@ -110,6 +114,8 @@ class SamsungKlima extends IPSModule
         $this->RegisterAttributeFloat('LastSollWritten', -999.0);
         $this->RegisterAttributeInteger('PVActive', 0);      // 0/1: PV-Vorkühlung aktiv
         $this->RegisterAttributeInteger('PVCandSince', 0);   // seit wann Umschalt-Kandidat
+        $this->RegisterAttributeInteger('PendingPower', -1); // -1 keiner, 0/1 erwarteter Power-Status
+        $this->RegisterAttributeInteger('PendingUntil', 0);  // Settle-Fenster: Status ignorieren bis
 
         $this->RegisterTimer('RegTimer', 0, 'SAMK_Regulate($_IPS["TARGET"]);');
     }
@@ -296,6 +302,7 @@ class SamsungKlima extends IPSModule
             // Fenster offen → Einschalten blockieren, sicher aus
             $this->WriteKNX('Power', false);
             $this->SetValueIfChanged('Power', false);
+            $this->MarkPowerPending(false);
             return;
         }
         if ($on) {
@@ -307,6 +314,7 @@ class SamsungKlima extends IPSModule
             $this->WriteKNX('Power', false);
         }
         $this->SetValueIfChanged('Power', $on);
+        $this->MarkPowerPending($on);
         $this->WriteAttributeInteger('LastToggle', time());
     }
 
@@ -330,6 +338,13 @@ class SamsungKlima extends IPSModule
     {
         return (bool) $this->GetValueSafe('RegActive', false)
             && $this->ReadPropertyInteger('ControlMode') === self::CTRL_SETPOINT;
+    }
+
+    /** Merkt einen gerade gesendeten Power-Befehl (Settle-Fenster gegen Status-Flattern). */
+    private function MarkPowerPending(bool $on): void
+    {
+        $this->WriteAttributeInteger('PendingPower', $on ? 1 : 0);
+        $this->WriteAttributeInteger('PendingUntil', time() + self::PENDING_SETTLE);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -373,15 +388,17 @@ class SamsungKlima extends IPSModule
             >= $this->ReadPropertyInteger('MinToggle');
 
         if ($this->ReadPropertyInteger('ControlMode') === self::CTRL_SETPOINT) {
-            // Sollwert-Folgen: Inverter moduliert selbst auf den Wunsch-Sollwert.
+            // Sollwert-Folgen: der Inverter moduliert selbst auf den Wunsch-Sollwert.
+            // Die Regelung schaltet NICHT per Power ab – das Gerät bleibt an und wird
+            // nur über den Sollwert geführt. Aus geschieht ausschließlich über die
+            // Sperren oben (Fenster/Freigabe) bzw. RegActive/Handbetrieb.
             if (!$powerOn) {
+                // Aus dem Aus heraus nur einschalten, wenn es zu warm wird.
                 if ($ist >= $target + $half && $canToggle) {
                     $this->WriteAttributeInteger('BiasLast', time());
                     $this->WriteSamsungSoll($this->ComputeSamsungSoll($target));
                     $this->RegulateSwitch(true);
                 }
-            } elseif ($ist <= $target - $this->ReadPropertyFloat('OffReserve') && $canToggle) {
-                $this->RegulateSwitch(false);
             } else {
                 // an: Sollwert nachführen + Sensor-Offset langsam trimmen (kein Takten)
                 $this->UpdateBias($ist);
@@ -460,6 +477,7 @@ class SamsungKlima extends IPSModule
             $this->SetValueIfChanged('Power', false);
             $this->WriteAttributeFloat('LastSollWritten', -999.0);
         }
+        $this->MarkPowerPending($on);
         $this->WriteAttributeInteger('LastToggle', time());
         $this->LogMessage(sprintf('Thermostat: %s (Ist %.1f / Soll %.1f)',
             $on ? 'EIN' : 'AUS', $this->CurrentIst() ?? 0, $this->CurrentSoll()), KL_MESSAGE);
@@ -490,6 +508,7 @@ class SamsungKlima extends IPSModule
         if ((bool) $this->GetValueSafe('Power', false)) {
             $this->WriteKNX('Power', false);
             $this->SetValueIfChanged('Power', false);
+            $this->MarkPowerPending(false);
             $this->WriteAttributeInteger('LastToggle', time());
             $this->WriteAttributeFloat('LastSollWritten', -999.0);
         }
@@ -510,6 +529,7 @@ class SamsungKlima extends IPSModule
                 || ($now - $this->ReadAttributeInteger('LastWindowOff')) > 30) {
                 $this->WriteKNX('Power', false);
                 $this->SetValueIfChanged('Power', false);
+                $this->MarkPowerPending(false);
                 $this->WriteAttributeInteger('LastWindowOff', $now);
                 $this->WriteAttributeInteger('LastToggle', $now);
             }
@@ -686,7 +706,16 @@ class SamsungKlima extends IPSModule
     {
         switch ($ident) {
             case 'Power':
-                $this->SetValueIfChanged('Power', $this->toBool($value));
+                $b = $this->toBool($value);
+                $pp = $this->ReadAttributeInteger('PendingPower');
+                if ($pp !== -1 && time() < $this->ReadAttributeInteger('PendingUntil')) {
+                    if ($b === ($pp === 1)) {
+                        $this->WriteAttributeInteger('PendingPower', -1); // Befehl bestätigt
+                    } else {
+                        break; // verspätete Gegenmeldung im Settle-Fenster → Anzeige NICHT umwerfen
+                    }
+                }
+                $this->SetValueIfChanged('Power', $b);
                 $this->Regulate();
                 break;
             case 'Mode':
