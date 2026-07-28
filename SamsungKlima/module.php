@@ -262,10 +262,20 @@ class SamsungKlima extends IPSModule
                 break;
             case 'Setpoint':
                 $v = $this->ClampSetpoint((float) $Value);
-                $this->WriteKNX('Setpoint', $v);
                 $this->SetValueIfChanged('Setpoint', $v);
                 $this->UpdateWarmCold();
-                $this->Regulate();
+                // Frisches Trim-Fenster: verhindert, dass der aufgelaufene Bias
+                // deinen neuen Soll im nächsten Zyklus sofort wieder verbiegt.
+                $this->WriteAttributeInteger('BiasLast', time());
+                if ($this->SetpointManagedByReg()) {
+                    // Sollwert-Folgen aktiv → Regulate() schreibt den (Bias-korrigierten)
+                    // Geräte-Soll als EINZIGEN Schreibvorgang (kein Doppelschreiben mehr).
+                    $this->Regulate();
+                } else {
+                    // Zweipunkt / Handbetrieb: dein Soll geht 1:1 an die Anlage.
+                    $this->WriteSamsungSoll($v);
+                    $this->Regulate();   // nur die Ein/Aus-Schaltentscheidung
+                }
                 break;
             case 'WindFree':
                 $this->WriteKNX('WindFree', (bool) $Value ? self::WINDFREE_ON : self::WINDFREE_OFF);
@@ -309,6 +319,17 @@ class SamsungKlima extends IPSModule
         } elseif ($this->ReadPropertyBoolean('TurnOffWhenInactive')) {
             $this->SetPower(false);
         }
+    }
+
+    /**
+     * Führt die Regelung den Geräte-Soll aktiv nach? Nur im Sollwert-Folgen-Modus
+     * bei aktiver Regelung. Dann übernimmt Regulate() das (Bias-korrigierte)
+     * Schreiben; sonst geht dein Soll 1:1 an die Anlage.
+     */
+    private function SetpointManagedByReg(): bool
+    {
+        return (bool) $this->GetValueSafe('RegActive', false)
+            && $this->ReadPropertyInteger('ControlMode') === self::CTRL_SETPOINT;
     }
 
     // ═══════════════════════════════════════════════════════════════
