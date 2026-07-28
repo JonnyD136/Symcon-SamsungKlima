@@ -423,13 +423,18 @@ class SamsungKlima extends IPSModule
         }
     }
 
-    /** Samsung-Sollwert: Ziel − Bias, auf Geräte-Grenzen geklammert, 0,5-K-Raster. */
+    /**
+     * Samsung-Sollwert: Ziel − Bias. Der Bias wirkt (in Kühlung) nur NACH UNTEN
+     * (kälter = mehr kühlen); der Geräte-Soll wird hart auf den Regelungs-Soll
+     * gedeckelt und darf nie darüber liegen. Auf Geräte-Grenzen geklammert, 0,5-K-Raster.
+     */
     private function ComputeSamsungSoll(float $target): float
     {
         $v = $target;
         if ($this->ReadPropertyBoolean('BiasEnabled')) {
-            $v -= $this->ReadAttributeFloat('Bias');
+            $v -= $this->ReadAttributeFloat('Bias');   // Bias >= 0 → nur absenken
         }
+        $v = min($v, $target);                          // nie über dem Regelungs-Soll
         $min = (float) $this->ReadPropertyInteger('SollMin');
         $max = (float) $this->ReadPropertyInteger('SollMax');
         $v = max($min, min($max, $v));
@@ -465,7 +470,8 @@ class SamsungKlima extends IPSModule
         $err  = $ist - $this->CurrentSoll();   // >0 = zu warm → Samsung-Soll absenken
         $bias = $this->ReadAttributeFloat('Bias') + $this->ReadPropertyFloat('BiasKi') * $err * $dtMin;
         $lim  = $this->ReadPropertyFloat('BiasLimit');
-        $bias = max(-$lim, min($lim, $bias));
+        // Bias nur nach unten (kälter als Ziel): [0, Limit] – nie über den Regelungs-Soll.
+        $bias = max(0.0, min($lim, $bias));
         $this->WriteAttributeFloat('Bias', $bias);
         $this->WriteAttributeInteger('BiasLast', $now);
     }
