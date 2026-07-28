@@ -116,6 +116,7 @@ class SamsungKlima extends IPSModule
         $this->RegisterAttributeInteger('PVCandSince', 0);   // seit wann Umschalt-Kandidat
         $this->RegisterAttributeInteger('PendingPower', -1); // -1 keiner, 0/1 erwarteter Power-Status
         $this->RegisterAttributeInteger('PendingUntil', 0);  // Settle-Fenster: Status ignorieren bis
+        $this->RegisterAttributeInteger('AutoArmed', 1);     // 1=scharf für Auto-EIN, 0=entschärft (Hand-Aus)
 
         $this->RegisterTimer('RegTimer', 0, 'SAMK_Regulate($_IPS["TARGET"]);');
     }
@@ -323,6 +324,7 @@ class SamsungKlima extends IPSModule
         $this->SetValueIfChanged('RegActive', $on);
         $this->UpdateTimer();
         if ($on) {
+            $this->WriteAttributeInteger('AutoArmed', 1); // Regelung an → scharf für Auto-EIN
             $this->Regulate();
         } elseif ($this->ReadPropertyBoolean('TurnOffWhenInactive')) {
             $this->SetPower(false);
@@ -388,21 +390,26 @@ class SamsungKlima extends IPSModule
             >= $this->ReadPropertyInteger('MinToggle');
 
         if ($this->ReadPropertyInteger('ControlMode') === self::CTRL_SETPOINT) {
-            // Sollwert-Folgen: der Inverter moduliert selbst auf den Wunsch-Sollwert.
-            // Die Regelung schaltet NICHT per Power ab – das Gerät bleibt an und wird
-            // nur über den Sollwert geführt. Aus geschieht ausschließlich über die
-            // Sperren oben (Fenster/Freigabe) bzw. RegActive/Handbetrieb.
-            if (!$powerOn) {
-                // Aus dem Aus heraus nur einschalten, wenn es zu warm wird.
-                if ($ist >= $target + $half && $canToggle) {
-                    $this->WriteAttributeInteger('BiasLast', time());
-                    $this->WriteSamsungSoll($this->ComputeSamsungSoll($target));
-                    $this->RegulateSwitch(true);
-                }
-            } else {
-                // an: Sollwert nachführen + Sensor-Offset langsam trimmen (kein Takten)
+            // Regelung an → die Anlage BLEIBT an und der Inverter moduliert über den
+            // Sollwert. Kein temperaturbedingtes Abschalten. Aus geschieht nur über
+            // die Sperren oben (Fenster/Freigabe), RegActive-Aus oder Handbetrieb.
+            // Wiedereinschalten aus dem Aus erst, wenn Ist >= Soll + Deadband (1 K).
+            $restart = $this->ReadPropertyFloat('Deadband');
+            if ($powerOn) {
+                // läuft: Soll nachführen + Sensor-Offset langsam trimmen (kein Takten)
+                $this->WriteAttributeInteger('AutoArmed', 0);
                 $this->UpdateBias($ist);
                 $this->WriteSamsungSoll($this->ComputeSamsungSoll($target));
+            } elseif ($ist < $target + $restart) {
+                // unter der Einschaltschwelle → für die nächste Überschreitung scharf
+                // stellen (ein Hand-Aus über der Schwelle bleibt dagegen entschärft).
+                $this->WriteAttributeInteger('AutoArmed', 1);
+            } elseif ((bool) $this->ReadAttributeInteger('AutoArmed') && $canToggle) {
+                // steigende Flanke über Soll+1 K UND scharf → wieder einschalten
+                $this->WriteAttributeInteger('BiasLast', time());
+                $this->WriteSamsungSoll($this->ComputeSamsungSoll($target));
+                $this->RegulateSwitch(true);
+                $this->WriteAttributeInteger('AutoArmed', 0);
             }
         } else {
             // Zweipunkt: Kompressor per Ein/Aus mit Totzone
@@ -509,6 +516,7 @@ class SamsungKlima extends IPSModule
             $this->WriteKNX('Power', false);
             $this->SetValueIfChanged('Power', false);
             $this->MarkPowerPending(false);
+            $this->WriteAttributeInteger('AutoArmed', 1); // Sperre-Aus: nach Freigabe wieder aufnehmen
             $this->WriteAttributeInteger('LastToggle', time());
             $this->WriteAttributeFloat('LastSollWritten', -999.0);
         }
@@ -530,6 +538,7 @@ class SamsungKlima extends IPSModule
                 $this->WriteKNX('Power', false);
                 $this->SetValueIfChanged('Power', false);
                 $this->MarkPowerPending(false);
+                $this->WriteAttributeInteger('AutoArmed', 1); // Fenster-Aus: nach Schließen wieder aufnehmen
                 $this->WriteAttributeInteger('LastWindowOff', $now);
                 $this->WriteAttributeInteger('LastToggle', $now);
             }

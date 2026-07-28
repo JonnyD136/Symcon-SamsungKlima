@@ -34,8 +34,8 @@
                         { "caption": "Zweipunkt (Ein/Aus)", "value": 0 }
                     ]
                 },
-                { "type": "NumberSpinner", "name": "Deadband", "caption": "Totzone / Einschaltschwelle (K)", "digits": 1, "minimum": 0.2, "maximum": 10 },
-                { "type": "NumberSpinner", "name": "OffReserve", "caption": "Ausschalt-Reserve unter Soll (K, nur Sollwert-Folgen)", "digits": 1, "minimum": 0.2, "maximum": 5 },
+                { "type": "NumberSpinner", "name": "Deadband", "caption": "Einschaltschwelle über Soll (K) – Wiederanlauf bei Sollwert-Folgen bzw. Totzone bei Zweipunkt", "digits": 1, "minimum": 0.2, "maximum": 10 },
+                { "type": "NumberSpinner", "name": "OffReserve", "caption": "Ausschalt-Reserve unter Soll (K) – derzeit ohne Funktion (kein temperaturbedingtes Abschalten mehr)", "digits": 1, "minimum": 0.2, "maximum": 5 },
                 { "type": "SelectVariable", "name": "ReleaseVarID", "caption": "Globale Kühlfreigabe (Variable \"Freigabe\" der Klima Zentrale). Leer = immer freigegeben" },
                 { "type": "CheckBox", "name": "TurnOffWhenInactive", "caption": "Klima ausschalten, wenn Regelung/Freigabe inaktiv (Abwesenheit)" },
                 { "type": "NumberSpinner", "name": "MinToggle", "caption": "Mindest-Umschaltzeit (Sekunden)", "minimum": 0, "maximum": 3600 },
