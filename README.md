@@ -1,8 +1,16 @@
-# Samsung Klima (MDT/KNX)
+# Samsung Klima & Wärmepumpe (MDT/KNX)
 
 Logisches Samsung-FJM-Klimagerät **je Raum** für IP-Symcon. Bündelt die vom
 MDT SCN-MBGRTU.01 auf KNX (Hauptgruppe 4) gelegten Gruppenadressen zu einem
 Gerät mit sauberen Profilen, Steuerlogik und optionaler Thermostat-Regelung.
+
+Die Library enthält zwei Geräte-Module:
+
+- **SamsungKlima** – FJM-Split je Raum (Kühlen, Thermostat-Regelung).
+- **SamsungWaermepumpe** – Samsung EHS Mono (MIM-B19N): Heizen, Warmwasser,
+  Zeitsteuerung (Wochenpläne) und Energie/Diagnose (el. Leistung, Wärmeleistung,
+  COP, Verbrauch). Anbindung ebenfalls über MDT→KNX; GA-Schema siehe
+  `SamsungWaermepumpe/Kanalliste-WP.md`. **Gerüst – noch nicht an realer WP getestet.**
 
 ## Voraussetzung
 

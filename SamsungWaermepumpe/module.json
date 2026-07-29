@@ -1,0 +1,11 @@
+{
+    "id": "{D2E3F4A5-6B7C-8D9E-0F1A-2B3C4D5E6F70}",
+    "name": "SamsungWaermepumpe",
+    "type": 3,
+    "vendor": "FACE GmbH",
+    "aliases": ["Samsung Wärmepumpe", "Samsung EHS", "MDT Wärmepumpe", "Wärmepumpe"],
+    "parentRequirements": [],
+    "childRequirements": [],
+    "implemented": [],
+    "prefix": "SAMW"
+}

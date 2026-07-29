@@ -1,0 +1,34 @@
+{
+    "elements": [
+        { "type": "Label", "caption": "Samsung Wärmepumpe (EHS Mono, MIM-B19N) über MDT SCN-MBGRTU.01 auf KNX. Die GAs werden per Haupt-/Mittelgruppe + Sub-Adresse automatisch gefunden (Schema siehe README)." },
+        { "type": "NumberSpinner", "name": "Hauptgruppe", "caption": "KNX Hauptgruppe" },
+        { "type": "NumberSpinner", "name": "Mittelgruppe", "caption": "KNX Mittelgruppe" },
+        {
+            "type": "ExpansionPanel", "caption": "Sollwertgrenzen",
+            "items": [
+                { "type": "NumberSpinner", "name": "HeatSollMin", "caption": "Heiz-Soll min (°C)" },
+                { "type": "NumberSpinner", "name": "HeatSollMax", "caption": "Heiz-Soll max (°C)" },
+                { "type": "NumberSpinner", "name": "DHWSollMin", "caption": "Warmwasser-Soll min (°C)" },
+                { "type": "NumberSpinner", "name": "DHWSollMax", "caption": "Warmwasser-Soll max (°C)" }
+            ]
+        },
+        {
+            "type": "ExpansionPanel", "caption": "Zeitsteuerung (Wochenpläne)",
+            "items": [
+                { "type": "Label", "caption": "Bei Aktivierung legt das Modul einen Wochenplan als Unterobjekt an. Umschaltzeiten dort frei editierbar." },
+                { "type": "CheckBox", "name": "UseHeatSchedule", "caption": "Heizzeiten-Wochenplan verwenden (Komfort / Absenkung / Aus)" },
+                { "type": "NumberSpinner", "name": "HeatComfort", "caption": "Komfort-Soll (°C)", "digits": 1 },
+                { "type": "NumberSpinner", "name": "HeatEco", "caption": "Absenk-Soll (°C)", "digits": 1 },
+                { "type": "CheckBox", "name": "UseDHWSchedule", "caption": "Warmwasserzeiten-Wochenplan verwenden (Ein / Aus)" }
+            ]
+        }
+    ],
+    "actions": [
+        { "type": "Button", "caption": "GAs neu einlesen (Discover)", "onClick": "SAMW_Discover($id);" },
+        { "type": "Label", "caption": "Nach Anlegen/Ändern der KNX-Gruppenadressen (MDT) hier neu einlesen." }
+    ],
+    "status": [
+        { "code": 102, "icon": "active", "caption": "Bereit" },
+        { "code": 201, "icon": "inactive", "caption": "Keine passenden KNX-GAs gefunden – Haupt-/Mittelgruppe prüfen" }
+    ]
+}
