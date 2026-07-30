@@ -44,6 +44,14 @@
         },
         {
             "type": "ExpansionPanel",
+            "caption": "Statusabfrage (Rückmeldung vom Gerät)",
+            "items": [
+                { "type": "Label", "caption": "Das MDT SCN-MBGRTU.01 sendet seine Status-Objekte nicht zyklisch. Ohne Abfrage bekommt Symcon Änderungen, die direkt am Gerät (Fernbedienung) gemacht werden, nie mitgeteilt – die Anzeige bleibt auf dem letzten eigenen Befehl stehen. Das Modul fragt die Status-Gruppenadressen darum aktiv per KNX-Leseanforderung ab." },
+                { "type": "NumberSpinner", "name": "PollInterval", "caption": "Abfrage-Intervall (Sekunden, 0 = aus)", "minimum": 0, "maximum": 3600 }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
             "caption": "Sensor-Offset-Trim (optional, langsames I-Glied)",
             "items": [
                 { "type": "CheckBox", "name": "BiasEnabled", "caption": "Samsung-Soll langsam so trimmen, dass die Wandtemperatur den Soll trifft" },
@@ -104,6 +112,7 @@
     ],
     "actions": [
         { "type": "Button", "caption": "Gruppenadressen neu einlesen", "onClick": "SAMK_Discover($id);" },
+        { "type": "Button", "caption": "Status jetzt abfragen", "onClick": "SAMK_PollStatus($id);" },
         { "type": "Label", "caption": "Nach dem Einlesen zeigt der Instanz-Status, ob alle Objekte gefunden wurden." }
     ],
     "status": [

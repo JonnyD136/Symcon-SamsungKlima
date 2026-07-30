@@ -51,6 +51,10 @@ class SamsungKlima extends IPSModule
     // gegen den Befehl gewertet (verzögerte/sporadische Rückmeldung → Anzeige-Flattern).
     private const PENDING_SETTLE = 120;
 
+    // Pause zwischen zwei Leseanforderungen einer Statusabfrage (ms) – der Bus
+    // soll nicht mit ~10 Telegrammen auf einen Schlag belastet werden.
+    private const POLL_GAP = 120;
+
     // ═══════════════════════════════════════════════════════════════
     //  LIFECYCLE
     // ═══════════════════════════════════════════════════════════════
@@ -84,6 +88,9 @@ class SamsungKlima extends IPSModule
         $this->RegisterPropertyBoolean('TurnOffWhenInactive', true);
         $this->RegisterPropertyInteger('MinToggle', 180);
         $this->RegisterPropertyInteger('RegInterval', 120);
+
+        // Aktive Statusabfrage (GroupValueRead) – das MDT sendet Status nicht zyklisch
+        $this->RegisterPropertyInteger('PollInterval', 300);
 
         $this->RegisterPropertyInteger('WindowVarID', 0);
         $this->RegisterPropertyBoolean('WindowInverted', false);
@@ -120,6 +127,7 @@ class SamsungKlima extends IPSModule
         $this->RegisterAttributeInteger('CommSeen', 0);      // 1=Komm-Status wurde schon einmal empfangen
 
         $this->RegisterTimer('RegTimer', 0, 'SAMK_Regulate($_IPS["TARGET"]);');
+        $this->RegisterTimer('PollTimer', 0, 'SAMK_PollStatus($_IPS["TARGET"]);');
     }
 
     public function ApplyChanges()
@@ -231,6 +239,13 @@ class SamsungKlima extends IPSModule
 
         // Timer: für Sicherheits-Check und die zeitbasierte PV-Zustandsmaschine
         $this->UpdateTimer();
+
+        // Statusabfrage: kurz nach dem Start einmal alles einlesen, danach stellt
+        // PollStatus() selbst auf das Normalintervall um. Der Kickoff ist je Raum
+        // versetzt, damit die Räume den Bus nicht gleichzeitig belasten.
+        $this->UpdatePollTimer($this->ReadPropertyInteger('PollInterval') > 0
+            ? 5 + 3 * max(0, $mg)
+            : 0);
 
         $ok = isset($bySub[self::STAT_SUB['Power']]) && isset($bySub[self::STAT_SUB['RoomTemp']]);
         $this->SetStatus($ok ? self::STATUS_OK : self::STATUS_NO_GA);
@@ -667,6 +682,52 @@ class SamsungKlima extends IPSModule
         $this->SetTimerInterval('RegTimer', $need ? $sec * 1000 : 0);
     }
 
+    /** Abfrage-Timer setzen. $override > 0 = einmaliger Kickoff in x Sekunden. */
+    private function UpdatePollTimer(int $override = 0): void
+    {
+        $iv = $override > 0 ? $override : $this->ReadPropertyInteger('PollInterval');
+        $this->SetTimerInterval('PollTimer', $iv > 0 ? $iv * 1000 : 0);
+    }
+
+    /**
+     * Aktive Statusabfrage: schickt für jede Status-GA eine KNX-Leseanforderung
+     * (GroupValueRead) und lässt die Rückmeldung über MessageSink/MirrorStatus
+     * einlaufen.
+     *
+     * Nötig, weil das MDT SCN-MBGRTU.01 seine Status-Objekte NICHT zyklisch und
+     * nicht zuverlässig spontan sendet: Änderungen direkt am Gerät (IR-Fern-
+     * bedienung, Handbetrieb) oder Befehle, die die Anlage gar nicht annimmt,
+     * kamen in Symcon nie an – die Anzeige blieb auf dem letzten eigenen Befehl
+     * stehen. Alle Status-Objekte des MDT haben das Lese-Flag gesetzt und
+     * antworten auf eine Leseanforderung (live verifiziert 30.07.2026).
+     */
+    public function PollStatus()
+    {
+        $statMap = json_decode($this->ReadAttributeString('StatMap'), true) ?: [];
+        $n = 0;
+        foreach (array_keys($statMap) as $vid) {
+            $vid = (int) $vid;
+            if (!IPS_VariableExists($vid)) {
+                continue;
+            }
+            $iid = IPS_GetParent($vid);
+            if ($iid <= 0 || !IPS_InstanceExists($iid)) {
+                continue;
+            }
+            try {
+                KNX_RequestStatus($iid);
+                $n++;
+            } catch (Throwable $e) {
+                $this->SendDebug('PollStatus', 'Lesen fehlgeschlagen (#' . $iid . '): ' . $e->getMessage(), 0);
+            }
+            IPS_Sleep(self::POLL_GAP);
+        }
+        $this->SendDebug('PollStatus', $n . ' Leseanforderungen gesendet', 0);
+
+        // Nach dem (versetzten) Kickoff auf das Normalintervall umstellen
+        $this->UpdatePollTimer();
+    }
+
     private function CurrentIst(): ?float
     {
         $ext = $this->ReadPropertyInteger('ExtTempVarID');
@@ -751,11 +812,19 @@ class SamsungKlima extends IPSModule
                 $this->SetValueIfChanged('Swing', $this->toBool($value));
                 break;
             case 'Setpoint':
-                $this->SetValueIfChanged('Setpoint', (float) $value);
+                // Der Soll, den die Anlage tatsächlich fährt – immer anzeigen.
+                $this->SetValueIfChanged('SetpointDevice', (float) $value);
+                // Den Wunsch-Soll nur übernehmen, wenn die Regelung ihn nicht selbst
+                // führt: im Sollwert-Folgen-Modus liegt der Geräte-Soll durch den Bias
+                // bewusst darunter, die Anzeige darf nicht dorthin nachlaufen.
+                if (!$this->SetpointManagedByReg()) {
+                    $this->SetValueIfChanged('Setpoint', (float) $value);
+                }
                 $this->UpdateWarmCold();
                 break;
             case 'WindFree':
-                $this->SetValueIfChanged('WindFree', ((int) $value) === self::WINDFREE_ON);
+                // 0 = aus, 9 = ein; jeder andere Wert ≠ 0 wird als ein gewertet
+                $this->SetValueIfChanged('WindFree', ((int) $value) !== self::WINDFREE_OFF);
                 break;
             case 'RoomTemp':
                 $f = (float) $value;
@@ -871,6 +940,10 @@ class SamsungKlima extends IPSModule
 
         $this->RegisterVariableFloat('Setpoint', 'Solltemperatur', 'SAMK.Setpoint', 30);
         $this->EnableAction('Setpoint');
+
+        // Rückmeldung: Soll, den die Anlage wirklich fährt (im Sollwert-Folgen-Modus
+        // durch den Bias bewusst unter dem Wunsch-Soll)
+        $this->RegisterVariableFloat('SetpointDevice', 'Solltemperatur Anlage', 'SAMK.Setpoint', 35);
 
         $this->RegisterVariableFloat('RoomTemp', 'Isttemperatur', '~Temperature', 40);
 

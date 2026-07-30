@@ -12,6 +12,13 @@ Instanzen angelegt wurden.
   (Subadresse) → Value-VarID. Ergebnis in Attributen `CmdMap` / `StatMap`.
 - **Lesen/Status:** `RegisterMessage(VM_UPDATE)` auf alle Status-/Lese-Value-
   Variablen → `MessageSink` → `MirrorStatus()` dekodiert in die logischen Vars.
+- **Statusabfrage (Pflicht!):** Das MDT sendet Status-Objekte **nicht zyklisch**
+  und nicht zuverlässig spontan – Änderungen an der Fernbedienung kämen sonst nie
+  an. `PollStatus()` schickt darum je Status-GA ein `KNX_RequestStatus($instanz)`
+  (GroupValueRead, 120 ms Abstand), Timer `PollTimer` mit `PollInterval`
+  (Default 300 s, 0 = aus). Kickoff nach `Discover()` je Raum versetzt
+  (5 + 3·Mittelgruppe s), danach stellt `PollStatus()` selbst auf das Intervall.
+  Lese-Flag ist auf allen MDT-Status-Objekten gesetzt (live verifiziert).
 - **Schreiben:** `RequestAction($knxValueVar, $wert)` (DPT-unabhängig, keine
   KNX_-Funktionen nötig – jede KNX-DPT-Value-Var hat eine Aktion).
 - **GA-Schema je Raum:** ungerade Sub = Befehl, gerade = Rückmeldung.
@@ -21,7 +28,12 @@ Instanzen angelegt wurden.
 ## Steuerlogik
 - **Erst Betriebsart, dann Ein** (`SetPower`, 250 ms Pause) – FJM-Kältekreis.
 - Solltemperatur wird in `[SollMin, SollMax]` geklammert (MDT kann das nicht).
-- Wind-Free: Bool ↔ Modbus 0/9. Komm-Status: `(v & 7)==7` → „Verbunden".
+- Wind-Free: Bool ↔ Modbus 0/9 (Status: alles ≠ 0 gilt als ein).
+  Komm-Status: `(v & 7)==7` → „Verbunden".
+- **Zwei Soll-Variablen:** `Setpoint` = Wunsch-Soll (bedienbar), `SetpointDevice`
+  = Rückmeldung „Solltemperatur Anlage". Im Sollwert-Folgen-Modus liegt der
+  Geräte-Soll durch den Bias bewusst darunter – die Status-Rückmeldung darf
+  `Setpoint` dann **nicht** überschreiben (sonst läuft die Anzeige nach unten weg).
 - Fehlercode → Klartext (`ErrorText()`), Roh-Isttemp 0xFFFF wird gefiltert.
 
 ## Thermostat (Zweipunkt + Totzone)
