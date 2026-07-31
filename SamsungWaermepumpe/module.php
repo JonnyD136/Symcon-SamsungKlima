@@ -648,8 +648,13 @@ class SamsungWaermepumpe extends IPSModule
             case 'OutErrorCode':
             case 'SlaveErrorCode':
             case 'ModuleError':
-                $this->SetValueIfChanged($ident, (int) $value);
-                $this->UpdateErrorText();
+                // 0xFFFF heißt „Register liefert keinen Wert" – nicht als Code ablegen,
+                // das sähe in der Objektliste wie ein Fehler aus.
+                $c = (int) $value;
+                if ($c !== self::NO_VALUE) {
+                    $this->SetValueIfChanged($ident, $c);
+                    $this->UpdateErrorText();
+                }
                 break;
         }
     }
@@ -913,7 +918,8 @@ class SamsungWaermepumpe extends IPSModule
      */
     private function SetIfPlausible(string $ident, $value): void
     {
-        $f = (float) $value;
+        // DPT 9.001 rechnet krumm (54,480000000000004) – auf eine Stelle runden
+        $f = round((float) $value, 1);
         if (!isset(self::RANGE[$ident])) {
             $this->SetValueIfChanged($ident, $f);
             return;
