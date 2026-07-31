@@ -1,45 +1,130 @@
-# MDT-Kanalliste – Samsung Wärmepumpe (EHS Mono, MIM-B19N)
+# Samsung Wärmepumpe EHS Mono — KNX-Gruppenadressen
 
-Vorlage zum Parametrieren des **MDT SCN-MBGRTU.01** für die WP. Das Symcon-Modul
-`SamsungWaermepumpe` findet die Gruppenadressen automatisch über **Haupt-/Mittelgruppe
-+ Sub-Adresse** (Schema unten). Wähle eine freie Mittelgruppe (Vorschlag: HG 4 / MG 6 –
-die FJM-Räume liegen auf MG 0–5).
+Anlage: **Samsung AE120BXYDGG/EU** → MIM-B19N #2 (Modbus Slave 2, PDU-Basis 50,
+NASA-Adresse 00) → MDT SCN-MBGRTU.01 (Kanäle 49–90) → KNX.
 
-Konvention wie bei der FJM: **ungerade Sub = Befehl, gerade Sub = Rückmeldung**
-(ab Sub 13 nur Rückmeldung). Ein/Aus als **1 Byte (V3 / DPT 5.005)**, nicht 1 Bit
-(1-Bit-RMW trifft den Samsung-„kein Wert"-Marker – siehe FJM).
+Stand: ETS-Export `Heizung 1.csv` vom 31.07.2026. **Dieser Export ist die
+Referenz für das Modul**, nicht die Kanalliste-PDF: dort waren die Status-GAs
+kompakt durchnummeriert (Kanal 74 → 5/2/31), tatsächlich angelegt wurde die
+ursprüngliche Kanalreihenfolge mit Lücken.
 
-| Sub | Funktion | DPT | Richtung | Modbus-Register (MIM-B19N) | Bemerkung |
-|----:|----------|-----|----------|----------------------------|-----------|
-| 1  | Power (WP ein/aus)        | 5.005 | Befehl      | _(aus MIM-B19N-Doc eintragen)_ | 1 Byte, 0/1 |
-| 2  | Power Status              | 5.005 | Rückmeldung | | |
-| 3  | Betriebsart (Auto/Heizen/Kühlen) | 5 | Befehl | | 0=Auto,1=Kühlen,4=Heizen |
-| 4  | Betriebsart Status        | 5 | Rückmeldung | | |
-| 5  | Heiz-Soll (Vorlauf o. Raum) | 9 | Befehl    | | je nach WL-/Raum-Regelung |
-| 6  | Heiz-Soll Status          | 9 | Rückmeldung | | |
-| 7  | Raum-/Vorlauf-Ist         | 9 | Rückmeldung | | |
-| 9  | Warmwasser ein/aus        | 5.005 | Befehl    | | |
-| 10 | Warmwasser Status         | 5.005 | Rückmeldung | | |
-| 11 | Warmwasser-Soll           | 9 | Befehl      | | |
-| 12 | Warmwasser-Soll Status    | 9 | Rückmeldung | | |
-| 13 | Warmwasser-/Speicher-Ist  | 9 | Rückmeldung | | |
-| 14 | Außentemperatur           | 9 | Rückmeldung | | |
-| 15 | Vorlauftemperatur         | 9 | Rückmeldung | | |
-| 16 | Rücklauftemperatur        | 9 | Rückmeldung | | |
-| 17 | In Betrieb / Verdichter   | 1 | Rückmeldung | | |
-| 18 | Abtaubetrieb              | 1 | Rückmeldung | | |
-| 19 | Elektrische Leistung (W)  | 14 | Rückmeldung | | Verbrauch |
-| 20 | Fehlercode                | 7 | Rückmeldung | | 0 = OK |
-| 21 | Komm-Status               | 5 | Rückmeldung | | ≠0 = verbunden |
-| 22 | Wärmeleistung (W)         | 14 | Rückmeldung | | für COP |
-| 23 | Energie elektrisch (kWh)  | 13/14 | Rückmeldung | | Zähler |
-| 24 | Energie Wärme (kWh)       | 13/14 | Rückmeldung | | Zähler |
+Hauptgruppe **5**, Mittelgruppe **2** (`Heizung/Wärmepumpe`).
+HG 5 MG 0 = Raumthermostate EG, MG 1 = OG — die gehören nicht zu diesem Modul.
 
-Nicht alle Register müssen belegt werden – das Modul nutzt nur die vorhandenen Subs
-(fehlende Funktionen werden übersprungen). Mindestens Power (1/2) und ein Ist-Wert
-sind sinnvoll, damit das Modul „Bereit" meldet.
+## Nicht angelegt
 
-**Register-Adressen:** Die konkreten Modbus-Register/Skalierungen des MIM-B19N (NASA)
-gehören in die Spalte „Modbus-Register". Quelle: MIM-B19N-Registerdokumentation bzw.
-Samsung-NASA-Liste. COP wird vom Modul aus Wärme-/El.-Leistung berechnet (kein eigenes
-Register nötig).
+| Kanal | Datenpunkt | Grund |
+|---|---|---|
+| 71–73 | Lüftung Ein/Aus, Betriebsart, Lüfterstufe | ERV-Register, kein Lüftungsgerät an der Anlage |
+| 78 | Umwälzpumpe PWM | nicht angelegt |
+
+Die Subadressen **31–36 und 41 sind dadurch frei**. Das Modul kommt damit
+zurecht (Discovery über die Subadresse, fehlende Objekte werden übersprungen);
+wer sie später nachrüstet, muss die Nummern aus dieser Tabelle verwenden, sonst
+verschiebt sich alles.
+
+## Gruppenadressen
+
+Sub = Subadresse in 5/2/x. „B" = Befehl (schreibbar), „S" = Status.
+
+| Sub | Rolle | Datenpunkt | Kanal · PDU | KNX DPT | Modul-Ident |
+|---|---|---|---|---|---|
+| 0 | S | Modul-Fehlerstatus | 49 · 0 | 5.005 | ModuleError |
+| 1 | S | AG Sammelfehlercode | 50 · 1 | 7 | OutErrorCode |
+| 2 | S | Abtaubetrieb | 51 · 2 | 7.001 | Defrost |
+| 3 | S | Kommunikationsstatus | 52 · 50 | 5.005 | Comm |
+| 4 | S | Gerätetyp | 53 · 51 | 7 | DeviceType |
+| 5 | B | Ein / Aus | 54 · 52 | 1.001 | Power |
+| 6 | S | Ein / Aus | 54 · 52 | 1.001 | Power |
+| 7 | B | Betriebsart | 55 · 53 | 5.005 | Mode |
+| 8 | S | Betriebsart | 55 · 53 | 5.005 | Mode |
+| 9 | B | Raum-Soll | 56 · 58 | 9.001 | RoomSetpoint |
+| 10 | S | Raum-Soll | 56 · 58 | 9.001 | RoomSetpoint |
+| 11 | S | Raum-Ist | 57 · 59 | 9.001 | RoomTemp |
+| 12 | S | Fehlercode | 58 · 63 | 7 | ErrorCode |
+| 13 | S | Rücklauf-Ist | 59 · 65 | 9.001 | ReturnTemp |
+| 14 | S | Vorlauf-Ist | 60 · 66 | 9.001 | FlowTemp |
+| 15 | S | MCC Vorlauf-Ist | 61 · 67 | 9.001 | MCCFlowTemp |
+| 16 | B | Vorlauf-Soll | 62 · 68 | 9.001 | FlowSetpoint |
+| 17 | S | Vorlauf-Soll | 62 · 68 | 9.001 | FlowSetpoint |
+| 18 | B | Warmwasser Ein / Aus | 63 · 72 | 1.001 | DHWPower |
+| 19 | S | Warmwasser Ein / Aus | 63 · 72 | 1.001 | DHWPower |
+| 20 | B | Warmwasser-Modus | 64 · 73 | 5.005 | DHWMode |
+| 21 | S | Warmwasser-Modus | 64 · 73 | 5.005 | DHWMode |
+| 22 | B | Warmwasser-Soll | 65 · 74 | 9.001 | DHWSetpoint |
+| 23 | S | Warmwasser-Soll | 65 · 74 | 9.001 | DHWSetpoint |
+| 24 | S | Warmwasser-Ist | 66 · 75 | 9.001 | DHWTemp |
+| 25 | S | Fehlercode Slave | 67 · 76 | 7 | SlaveErrorCode |
+| 26 | S | Fernbedienungssperre | 68 · 64 | 7 | RemoteLock |
+| 27 | B | Silent-Betrieb | 69 · 78 | 1.001 | Silent |
+| 28 | S | Silent-Betrieb | 69 · 78 | 1.001 | Silent |
+| 29 | B | Away-Funktion | 70 · 79 | 1.001 | Away |
+| 30 | S | Away-Funktion | 70 · 79 | 1.001 | Away |
+| 37 | S | BW-Zusatzheizung | 74 · 82 | 5.005 | BoosterDHW |
+| 38 | S | Ersatzheizung | 75 · 83 | 5.005 | BackupHeater |
+| 39 | S | Wasserdurchfluss | 76 · 84 | 9.001 | WaterFlow |
+| 40 | S | 3-Wegeventil | 77 · 85 | 5.005 | ThreeWayValve |
+| 42 | S | Vorlauf-Ziel (Regler) | 79 · 87 | 9.001 | FlowTarget |
+| 43 | S | Heizkurven-Ziel | 80 · 88 | 9.001 | CurveTarget |
+| 44 | S | Wassertemperatur Zone 1 | 81 · 89 | 9.001 | WaterZone1 |
+| 45 | S | Mischventil-Temperatur | 82 · 90 | 9.001 | MixValve |
+| 46 | S | Außentemperatur | 83 · 4 | 9.001 | OutdoorTemp |
+| 47 | S | Kompressorfrequenz | 84 · 5 | 7 | CompFreq |
+| 48 | S | Stromaufnahme Kompressor | 85 · 6 | 9.001 | CompCurrent |
+| 49 | S | Heißgastemperatur | 86 · 7 | 9.001 | HotGas |
+| 50 | S | Hochdruck | 87 · 8 | 9.001 | HighPressure |
+| 51 | S | Niederdruck | 88 · 9 | 9.001 | LowPressure |
+| 52 | S | Betriebszustand Außengerät | 89 · 10 | 7 | OutdoorState |
+| 53 | S | 4-Wege-Ventil | 90 · 11 | 5.005 | FourWayValve |
+
+## Wertebedeutungen
+
+| Datenpunkt | Werte |
+|---|---|
+| Betriebsart | 0 Auto · 1 Kühlen · 4 Heizen (am Bedienteil gegenprüfen) |
+| Warmwasser-Modus | 0 Eco · 1 Standard · 2 Power · 3 Force |
+| Kommunikationsstatus | Bits: 1 vorhanden · 2 Typ erkannt · 4 ready · 8 Komm-Fehler. **7 = betriebsbereit**, 255 ungültig |
+| Modul-Fehlerstatus | Bits: 1 Adressfehler · 2 Kommunikation R1/R2 · 4 Tracking. 0 = ok |
+| Abtaubetrieb | 0 **oder 255** = Abtauen aus |
+| Betriebszustand AG | 0 Stop · 2 Normalbetrieb · 5 Abtauen |
+| 3-Wegeventil | 0 Heizkreis · 1 Speicher |
+| Fernbedienungssperre | 0 frei · **25443** gesperrt |
+| Fehlercodes | 0 = kein Fehler |
+| Vorlauf-Soll | Heizen 15–65 °C |
+| Warmwasser-Soll | 30–70 °C |
+
+**Samsung-Marker 0xFFFF (65535) = „kein Wert".** Nach der MDT-Skalierung ×0,1
+kommt der als **−0,1** an. Ein globaler Filter darauf wäre falsch, weil −0,1 °C
+bei der Außentemperatur ein gültiger Wert ist — das Modul prüft darum je
+Datenpunkt ein eigenes Plausibilitätsfenster (`RANGE` in `module.php`).
+
+## Abgeleitete Werte
+
+Die Anlage hat keinen Wärmemengenzähler. Das Modul rechnet:
+
+- **Spreizung** = Vorlauf-Ist − Rücklauf-Ist
+- **Wärmeleistung** [W] = Durchfluss [l/min] × Spreizung [K] × 69,67
+  (4,18 kJ/(kg·K) · 1 kg/l · 1000 / 60 s). Nur bei positiver Spreizung — beim
+  Abtauen und im Kühlbetrieb wird sie negativ und würde den COP verfälschen.
+- **Elektrische Leistung** [W] = Stromaufnahme Kompressor [A] × Netzspannung
+  + pauschaler Zuschlag. Ohne Umwälzpumpe, Heizstab und Leistungsfaktor.
+- **COP** = Wärmeleistung / elektrische Leistung, erst ab 100 W elektrisch.
+
+Beides sind Richtwerte, keine Messwerte. Wer den echten COP will, braucht einen
+Wärmemengenzähler und einen Zähler auf der Einspeisung der Wärmepumpe.
+
+## Erweiterbare Register
+
+Die Kanäle 74–90 lesen Register, die erst nach einem einmaligen Schreibzugriff
+dauerhaft verfügbar sind (Set-ID per FC 16 auf die Aktivierungsadresse,
+Zieladresse = Aktivierungsadresse − 5996 beim Außengerät). Details und die
+vollständige ID-Liste stehen in `MDT-Kanalliste_Samsung-Waermepumpe_2.pdf`,
+Blatt „Erweiterbare Register aktivieren". **Offen:** ob die Registrierung einen
+Spannungsausfall übersteht — nach einem Stromausfall gegenprüfen.
+
+## Offen / zu verifizieren
+
+- Betriebsart-Codes am Bedienteil gegenlesen (0/1/4 stammt aus der FJM-Analogie).
+- Vorlauf-Soll als PV-Hebel: ob er die Heizkurve übersteuert, muss gemessen werden.
+- Die zwölf Wasserregister (PDU 65–76) stammen aus zwei Community-Quellen, die
+  sich decken, sind aber nicht von Samsung bestätigt. Messblatt im PDF.

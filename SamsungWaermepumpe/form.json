@@ -1,15 +1,38 @@
 {
     "elements": [
-        { "type": "Label", "caption": "Samsung Wärmepumpe (EHS Mono, MIM-B19N) über MDT SCN-MBGRTU.01 auf KNX. Die GAs werden per Haupt-/Mittelgruppe + Sub-Adresse automatisch gefunden (Schema siehe README)." },
-        { "type": "NumberSpinner", "name": "Hauptgruppe", "caption": "KNX Hauptgruppe" },
-        { "type": "NumberSpinner", "name": "Mittelgruppe", "caption": "KNX Mittelgruppe" },
+        { "type": "Label", "caption": "Samsung Wärmepumpe EHS Mono (AE120BXYDGG) über MIM-B19N #2 und MDT SCN-MBGRTU.01 auf KNX. Die Gruppenadressen werden anhand von Haupt-/Mittelgruppe automatisch gefunden – laut ETS-Export liegt die Wärmepumpe auf HG 5 / MG 2. Die Subadressen folgen der MDT-Kanalnummerierung und haben Lücken: 31–36 (Lüftung/ERV) und 41 (Umwälzpumpe PWM) sind nicht angelegt." },
+        {
+            "type": "RowLayout",
+            "items": [
+                { "type": "NumberSpinner", "name": "Hauptgruppe", "caption": "KNX Hauptgruppe", "minimum": 0, "maximum": 31 },
+                { "type": "NumberSpinner", "name": "Mittelgruppe", "caption": "KNX Mittelgruppe", "minimum": 0, "maximum": 7 }
+            ]
+        },
         {
             "type": "ExpansionPanel", "caption": "Sollwertgrenzen",
             "items": [
-                { "type": "NumberSpinner", "name": "HeatSollMin", "caption": "Heiz-Soll min (°C)" },
-                { "type": "NumberSpinner", "name": "HeatSollMax", "caption": "Heiz-Soll max (°C)" },
-                { "type": "NumberSpinner", "name": "DHWSollMin", "caption": "Warmwasser-Soll min (°C)" },
-                { "type": "NumberSpinner", "name": "DHWSollMax", "caption": "Warmwasser-Soll max (°C)" }
+                { "type": "Label", "caption": "Grenzen für die schreibbaren Sollwerte. Das MDT klammert nicht selbst – ein Wert außerhalb des Geräte-Bereichs wird von der Anlage verworfen oder falsch übernommen." },
+                { "type": "NumberSpinner", "name": "RoomSollMin", "caption": "Raum-Soll min (°C)", "minimum": 5, "maximum": 40 },
+                { "type": "NumberSpinner", "name": "RoomSollMax", "caption": "Raum-Soll max (°C)", "minimum": 5, "maximum": 40 },
+                { "type": "NumberSpinner", "name": "FlowSollMin", "caption": "Vorlauf-Soll min (°C)", "minimum": 5, "maximum": 70 },
+                { "type": "NumberSpinner", "name": "FlowSollMax", "caption": "Vorlauf-Soll max (°C)", "minimum": 5, "maximum": 70 },
+                { "type": "NumberSpinner", "name": "DHWSollMin", "caption": "Warmwasser-Soll min (°C)", "minimum": 20, "maximum": 80 },
+                { "type": "NumberSpinner", "name": "DHWSollMax", "caption": "Warmwasser-Soll max (°C)", "minimum": 20, "maximum": 80 }
+            ]
+        },
+        {
+            "type": "ExpansionPanel", "caption": "Statusabfrage (Rückmeldung vom Gerät)",
+            "items": [
+                { "type": "Label", "caption": "Das MDT sendet Status-Objekte nur, wenn das in der ETS parametriert ist. Ohne Abfrage bleibt die Anzeige auf dem letzten eigenen Befehl stehen – Änderungen am Bedienteil der Wärmepumpe kämen nie an. Das Modul fragt die Status-Gruppenadressen darum aktiv per KNX-Leseanforderung ab. Ist zyklisches Senden in der ETS aktiv, genügt hier ein träges Intervall (900 s) als Netz." },
+                { "type": "NumberSpinner", "name": "PollInterval", "caption": "Abfrage-Intervall (Sekunden, 0 = aus)", "minimum": 0, "maximum": 3600 }
+            ]
+        },
+        {
+            "type": "ExpansionPanel", "caption": "Leistungs- und COP-Schätzung",
+            "items": [
+                { "type": "Label", "caption": "Die Anlage liefert keinen Wärmemengenzähler. Die Wärmeleistung wird aus Wasserdurchfluss und Spreizung berechnet (Durchfluss × Spreizung × 69,67), die elektrische Leistung aus der Kompressor-Stromaufnahme × Netzspannung. Das lässt Umwälzpumpe, Heizstab und Leistungsfaktor außen vor – der COP ist damit ein Richtwert, kein Messwert." },
+                { "type": "NumberSpinner", "name": "Mains", "caption": "Netzspannung für die Leistungsschätzung (V)", "digits": 0, "minimum": 100, "maximum": 500 },
+                { "type": "NumberSpinner", "name": "StandbyWatt", "caption": "Pauschaler Zuschlag für Pumpe/Elektronik (W)", "digits": 0, "minimum": 0, "maximum": 2000 }
             ]
         },
         {
@@ -17,6 +40,14 @@
             "items": [
                 { "type": "Label", "caption": "Bei Aktivierung legt das Modul einen Wochenplan als Unterobjekt an. Umschaltzeiten dort frei editierbar." },
                 { "type": "CheckBox", "name": "UseHeatSchedule", "caption": "Heizzeiten-Wochenplan verwenden (Komfort / Absenkung / Aus)" },
+                {
+                    "type": "Select", "name": "ScheduleTarget", "caption": "Worauf der Wochenplan wirkt",
+                    "options": [
+                        { "caption": "Raum-Sollwert", "value": 0 },
+                        { "caption": "Vorlauf-Sollwert", "value": 1 }
+                    ]
+                },
+                { "type": "Label", "caption": "Achtung: Im Heizkurvenbetrieb hat der Raum-Sollwert an dieser Anlage keine Funktion – dann ist der Vorlauf-Sollwert der Hebel, und Komfort/Absenkung müssen Vorlauftemperaturen sein (z. B. 35 / 28 statt 22 / 19)." },
                 { "type": "NumberSpinner", "name": "HeatComfort", "caption": "Komfort-Soll (°C)", "digits": 1 },
                 { "type": "NumberSpinner", "name": "HeatEco", "caption": "Absenk-Soll (°C)", "digits": 1 },
                 { "type": "CheckBox", "name": "UseDHWSchedule", "caption": "Warmwasserzeiten-Wochenplan verwenden (Ein / Aus)" }
@@ -24,11 +55,12 @@
         }
     ],
     "actions": [
-        { "type": "Button", "caption": "GAs neu einlesen (Discover)", "onClick": "SAMW_Discover($id);" },
-        { "type": "Label", "caption": "Nach Anlegen/Ändern der KNX-Gruppenadressen (MDT) hier neu einlesen." }
+        { "type": "Button", "caption": "Gruppenadressen neu einlesen", "onClick": "SAMW_Discover($id);" },
+        { "type": "Button", "caption": "Status jetzt abfragen", "onClick": "SAMW_PollStatus($id);" },
+        { "type": "Label", "caption": "Nach Anlegen oder Ändern der KNX-Gruppenadressen hier neu einlesen. Der Instanz-Status zeigt, ob die Objekte gefunden wurden." }
     ],
     "status": [
-        { "code": 102, "icon": "active", "caption": "Bereit" },
-        { "code": 201, "icon": "inactive", "caption": "Keine passenden KNX-GAs gefunden – Haupt-/Mittelgruppe prüfen" }
+        { "code": 102, "icon": "active", "caption": "Aktiv – Gruppenadressen gefunden" },
+        { "code": 201, "icon": "inactive", "caption": "Gruppenadressen nicht gefunden – Haupt-/Mittelgruppe und Configurator-Import prüfen" }
     ]
 }
