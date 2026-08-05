@@ -246,6 +246,7 @@ class SamsungWaermepumpe extends IPSModule
         $this->RegisterAttributeString('FactorSamples', '[]');// Korrekturfaktor je Ladung
         $this->RegisterAttributeString('DrawToday', '{}');    // Zapfungen des laufenden Tages
         $this->RegisterAttributeString('Profile', '[]');      // Wochenprofil [7][24] in K
+        $this->RegisterAttributeString('DayCounts', '[]');    // gesehene Tage je Wochentag
         $this->RegisterAttributeFloat('LastTemp', 0.0);
         $this->RegisterAttributeInteger('LastTempTs', 0);
 
@@ -604,10 +605,15 @@ class SamsungWaermepumpe extends IPSModule
             return [$min, $temp];
         }
 
-        $ready = $this->ReadyByMinutes();
-        if ($ready !== null) {
-            $frueh = $this->ParseTime($this->ReadPropertyString('DHWEarliestDeadline')) ?? 12 * 60;
-            $min = max($frueh, min($min, $ready - $this->ReadPropertyInteger('DHWLeadTime')));
+        // Nur Bedarf, der NACH der Vormittagsgrenze liegt, darf die Deadline
+        // vorziehen. Die morgendliche Dusche deckt die Ladung vom Vortag ab –
+        // zöge sie die Deadline mit, würde mittags bei jeder Wolke aus dem Netz
+        // geheizt, statt auf die Sonne zu warten.
+        $frueh = $this->ParseTime($this->ReadPropertyString('DHWEarliestDeadline')) ?? 12 * 60;
+        $lead  = $this->ReadPropertyInteger('DHWLeadTime');
+        $relevant = $this->FirstDemandAfter($frueh + $lead);
+        if ($relevant !== null) {
+            $min = max($frueh, min($min, $relevant - $lead));
         }
 
         $erwartet = $this->ExpectedDrawAfter($min);
@@ -680,6 +686,7 @@ class SamsungWaermepumpe extends IPSModule
             $tage[$tag][(int) date('G', $t[$i]['TimeStamp'])] += round($ab, 2);
         }
         $prof = array_fill(0, 7, array_fill(0, 24, 0.0));
+        $zaehler = array_fill(0, 7, 0);
         ksort($tage);
         foreach ($tage as $tag => $k) {
             $wd = (int) date('w', strtotime($tag));
@@ -687,8 +694,10 @@ class SamsungWaermepumpe extends IPSModule
                 $prof[$wd][$h] = round($prof[$wd][$h] * (1 - self::PROFILE_ALPHA)
                                      + $k[$h] * self::PROFILE_ALPHA, 2);
             }
+            $zaehler[$wd] = min(20, $zaehler[$wd] + 1);
         }
         $this->WriteAttributeString('Profile', json_encode($prof));
+        $this->WriteAttributeString('DayCounts', json_encode($zaehler));
 
         // ── Ladungen → Leistung und Korrekturfaktor ──
         $amp   = @$this->GetIDForIdent('CompCurrent');
@@ -698,7 +707,7 @@ class SamsungWaermepumpe extends IPSModule
             if ($hub < self::CHARGE_MIN_K || !$last || !AC_GetLoggingStatus($ac, $last)) {
                 continue;
             }
-            $grund = $this->Quantile(array_column(AC_GetLoggedValues($ac, $last, $a - 2400, $a - 120, 0), 'Value'), 0.2);
+            $grund = $this->Quantile(array_column(AC_GetLoggedValues($ac, $last, $a - 2400, $a - 120, 0), 'Value'), 0.5);
             $inn   = array_column(AC_GetLoggedValues($ac, $last, $a, $b, 0), 'Value');
             if ($grund === null || count($inn) < self::CHARGE_MIN_N) {
                 continue;
@@ -761,7 +770,7 @@ class SamsungWaermepumpe extends IPSModule
     public function ResetLearning()
     {
         foreach (['LoadRing'=>'[]', 'Charge'=>'{}', 'PowerSamples'=>'[]',
-                  'FactorSamples'=>'[]', 'DrawToday'=>'{}', 'Profile'=>'[]'] as $a => $leer) {
+                  'FactorSamples'=>'[]', 'DrawToday'=>'{}', 'Profile'=>'[]', 'DayCounts'=>'[]'] as $a => $leer) {
             $this->WriteAttributeString($a, $leer);
         }
         $this->WriteAttributeFloat('LastTemp', 0.0);
@@ -899,6 +908,9 @@ class SamsungWaermepumpe extends IPSModule
                                  + ((float) $tag['k'][$h]) * self::PROFILE_ALPHA, 2);
         }
         $this->WriteAttributeString('Profile', json_encode($prof));
+        $zaehler = $this->DayCounts();
+        $zaehler[$wd] = min(20, (int) $zaehler[$wd] + 1);   // deckeln: alte Tage sollen nicht ewig dominieren
+        $this->WriteAttributeString('DayCounts', json_encode($zaehler));
         $this->WriteAttributeString('DrawToday', json_encode(
             ['tag'=>date('Y-m-d'), 'wd'=>(int) date('w'), 'k'=>array_fill(0, 24, 0.0)]));
         $this->PublishLearned();
@@ -915,6 +927,43 @@ class SamsungWaermepumpe extends IPSModule
         return $p;
     }
 
+    private function DayCounts(): array
+    {
+        $c = json_decode($this->ReadAttributeString('DayCounts'), true);
+        return (is_array($c) && count($c) === 7) ? $c : array_fill(0, 7, 0);
+    }
+
+    /**
+     * Bedarfsprofil eines Wochentags – solange wenige Tage dieses Wochentags
+     * gesehen wurden, zum Schnitt über alle Tage hingezogen. Ohne diese
+     * Abmilderung wäre das Profil wochenlang unbrauchbar: Nach fünf Tagen
+     * Datenbasis sind fünf von sieben Wochentagen schlicht leer.
+     */
+    private function ProfileFor(int $wd): array
+    {
+        $p = $this->Profile();
+        $n = (int) ($this->DayCounts()[$wd] ?? 0);
+
+        $alle = array_fill(0, 24, 0.0);
+        $tage = 0;
+        foreach ($this->DayCounts() as $d => $c) {
+            if ($c > 0) {
+                $tage++;
+                for ($h = 0; $h < 24; $h++) {
+                    $alle[$h] += $p[$d][$h];
+                }
+            }
+        }
+        if ($tage === 0) {
+            return $p[$wd];
+        }
+        $out = [];
+        for ($h = 0; $h < 24; $h++) {
+            $out[$h] = round(($n * $p[$wd][$h] + $alle[$h] / $tage) / ($n + 1), 2);
+        }
+        return $out;
+    }
+
     /** Gelernter Korrekturfaktor für die Leistungsschätzung (1.0 = ungelernt). */
     private function PowerCorrection(): float
     {
@@ -925,8 +974,14 @@ class SamsungWaermepumpe extends IPSModule
     /** Erste Stunde des Tages mit nennenswertem Bedarf, in Minuten. */
     private function ReadyByMinutes(): ?int
     {
-        $p = $this->Profile()[(int) date('w')];
-        for ($h = 0; $h < 24; $h++) {
+        return $this->FirstDemandAfter(0);
+    }
+
+    /** Erste Stunde ab $abMinute mit nennenswertem Bedarf, in Minuten. */
+    private function FirstDemandAfter(int $abMinute): ?int
+    {
+        $p = $this->ProfileFor((int) date('w'));
+        for ($h = (int) ceil($abMinute / 60); $h < 24; $h++) {
             if ($p[$h] >= self::DRAW_SIGNIFICANT) {
                 return $h * 60;
             }
@@ -943,14 +998,14 @@ class SamsungWaermepumpe extends IPSModule
         if ($abMinute === null) {
             return 0.0;
         }
-        $p = $this->Profile();
+        $heute  = $this->ProfileFor((int) date('w'));
+        $morgen = $this->ProfileFor(((int) date('w') + 1) % 7);
         $summe = 0.0;
         for ($h = (int) ($abMinute / 60); $h < 24; $h++) {
-            $summe += $p[(int) date('w')][$h];
+            $summe += $heute[$h];
         }
-        $morgen = ((int) date('w') + 1) % 7;
         for ($h = 0; $h < self::PV_HOUR; $h++) {
-            $summe += $p[$morgen][$h];
+            $summe += $morgen[$h];
         }
         return round($summe, 1);
     }
@@ -1004,6 +1059,7 @@ class SamsungWaermepumpe extends IPSModule
                 self::WD[(int) date('w')], (int) ($ready / 60), (int) ($dl / 60), $dl % 60, $temp));
 
         $prof = $this->Profile();
+        $zahl = $this->DayCounts();
         $zeilen = [];
         for ($d = 1; $d <= 7; $d++) {
             $wd = $d % 7;                              // Anzeige Mo…So
@@ -1013,7 +1069,8 @@ class SamsungWaermepumpe extends IPSModule
                 continue;
             }
             $spitze = array_search(max($prof[$wd]), $prof[$wd], true);
-            $zeilen[] = sprintf('%s %.0f K (Spitze %02d:00)', self::WD[$wd], $summe, $spitze);
+            $zeilen[] = sprintf('%s %.0f K um %02d:00 (%dx)',
+                self::WD[$wd], $summe, $spitze, (int) ($zahl[$wd] ?? 0));
         }
         $this->SetValueIfChanged('DHWProfileText', implode(' · ', $zeilen));
     }
