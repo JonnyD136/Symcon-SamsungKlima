@@ -44,6 +44,10 @@ class SamsungKlima extends IPSModule
     private const CTRL_TWOPOINT = 0;   // Ein/Aus mit Totzone
     private const CTRL_SETPOINT = 1;   // Sollwert-Folgen (Inverter moduliert)
 
+    // Quelle der PV-Überschuss-Entscheidung
+    private const PVSRC_OWN     = 0;   // Modul misst selbst (Schwelle + Verzögerung)
+    private const PVSRC_MANAGER = 1;   // Energiemanager schaltet „PV-Freigabe"
+
     private const WINDFREE_ON  = 9;
     private const WINDFREE_OFF = 0;
 
@@ -101,6 +105,15 @@ class SamsungKlima extends IPSModule
 
         // PV-Überschuss-Vorkühlung (optional, je Raum)
         $this->RegisterPropertyBoolean('PVEnabled', false);
+        // Woher kommt die Entscheidung „jetzt ist Überschuss da"?
+        //   PVSRC_OWN     – das Modul misst selbst (Schwelle/Verzögerung, s. u.)
+        //   PVSRC_MANAGER – ein Energiemanager gibt den Raum über die Variable
+        //                   „PV-Freigabe" frei. Nötig, sobald mehrere Verbraucher
+        //                   um denselben Überschuss konkurrieren: nur eine Stelle
+        //                   darf das Budget verteilen, sonst greift jeder Raum
+        //                   dieselben Watt gleichzeitig ab.
+        $this->RegisterPropertyInteger('PVSource', self::PVSRC_OWN);
+        $this->RegisterPropertyBoolean('PVForceRegulation', false);
         $this->RegisterPropertyInteger('PVSurplusVarID', 0);
         $this->RegisterPropertyBoolean('PVGridSign', false);
         $this->RegisterPropertyFloat('PVThreshold', 1500.0);   // ~ erwartete Klima-Leistung
@@ -312,6 +325,9 @@ class SamsungKlima extends IPSModule
             case 'RegActive':
                 $this->SetRegActive((bool) $Value);
                 break;
+            case 'PVRelease':
+                $this->SetPVRelease((bool) $Value);
+                break;
             default:
                 throw new Exception('Unbekannte Aktion: ' . $Ident);
         }
@@ -347,9 +363,40 @@ class SamsungKlima extends IPSModule
         if ($on) {
             $this->WriteAttributeInteger('AutoArmed', 1); // Regelung an → scharf für Auto-EIN
             $this->Regulate();
-        } elseif ($this->ReadPropertyBoolean('TurnOffWhenInactive')) {
+        } elseif (!$this->PVRegulates() && $this->ReadPropertyBoolean('TurnOffWhenInactive')) {
+            // Läuft der Raum gerade nur auf PV-Freigabe, darf das Abschalten der
+            // Handregelung ihn nicht mitreißen – der Manager gibt ihn wieder frei.
             $this->SetPower(false);
         }
+    }
+
+    /**
+     * Freigabe des Energiemanagers. Steigende Flanke: Raum scharf stellen und
+     * sofort regeln (auch wenn „Regelung aktiv" aus ist – dann übernimmt die
+     * PV-Vorkühlung). Fallende Flanke: zurück in den Zustand davor, d. h. bei
+     * ausgeschalteter Handregelung wieder aus.
+     */
+    private function SetPVRelease(bool $on): void
+    {
+        $this->SetValueIfChanged('PVRelease', $on);
+        $this->UpdateTimer();
+
+        if ($on) {
+            $this->WriteAttributeInteger('AutoArmed', 1);
+            $this->Regulate();
+            return;
+        }
+        if (!(bool) $this->GetValueSafe('RegActive', false)) {
+            $this->EnsureOff();
+        } else {
+            $this->Regulate();   // Soll-Absenkung fällt weg, Regelung läuft weiter
+        }
+    }
+
+    /** Hält allein die PV-Freigabe den Raum gerade in Betrieb? */
+    private function PVRegulates(): bool
+    {
+        return $this->ReadPropertyBoolean('PVForceRegulation') && $this->PVActive();
     }
 
     /**
@@ -376,8 +423,11 @@ class SamsungKlima extends IPSModule
 
     public function Regulate()
     {
-        // Master-Schalter: Regelung nur, wenn die Variable "Regelung aktiv" an ist
-        if (!(bool) $this->GetValueSafe('RegActive', false)) {
+        // Master-Schalter: Regelung nur, wenn die Variable "Regelung aktiv" an ist.
+        // Ausnahme Vorkühlen: Mit PVForceRegulation übernimmt eine anliegende
+        // PV-Freigabe die Rolle des Master-Schalters, damit auch ein Raum ohne
+        // Handregelung den Überschuss aufnehmen kann.
+        if (!(bool) $this->GetValueSafe('RegActive', false) && !$this->PVRegulates()) {
             return;
         }
 
@@ -591,8 +641,11 @@ class SamsungKlima extends IPSModule
     {
         $soll = $this->CurrentSoll();
         if ($this->PVActive()) {
-            $soll = max($this->ReadPropertyFloat('PVMinTemp'),
-                        $soll - $this->ReadPropertyFloat('PVOffset'));
+            $tiefer = max($this->ReadPropertyFloat('PVMinTemp'),
+                          $soll - $this->ReadPropertyFloat('PVOffset'));
+            // Vorkühlen darf nur absenken: liegt der Wunsch-Soll bereits unter der
+            // Untergrenze, bleibt er stehen statt angehoben zu werden.
+            $soll = min($soll, $tiefer);
         }
         return $soll;
     }
@@ -608,6 +661,14 @@ class SamsungKlima extends IPSModule
         if (!$this->ReadPropertyBoolean('PVEnabled')) {
             return false;
         }
+
+        // Energiemanager-Betrieb: Der Manager kennt alle Verbraucher und verteilt
+        // den Überschuss der Reihe nach. Schwelle, Hysterese und Verzögerungen
+        // gehören dann dorthin – hier zählt nur noch seine Freigabe.
+        if ($this->ReadPropertyInteger('PVSource') === self::PVSRC_MANAGER) {
+            return (bool) $this->GetValueSafe('PVRelease', false);
+        }
+
         $pv = $this->ReadPropertyInteger('PVSurplusVarID');
         if ($pv <= 0 || !IPS_VariableExists($pv)) {
             $this->WriteAttributeInteger('PVActive', 0);
@@ -676,7 +737,7 @@ class SamsungKlima extends IPSModule
     private function UpdateTimer(): void
     {
         $iv  = $this->ReadPropertyInteger('RegInterval');
-        $reg = (bool) $this->GetValueSafe('RegActive', false);
+        $reg = (bool) $this->GetValueSafe('RegActive', false) || $this->PVRegulates();
         $need = $reg && ($iv > 0 || $this->ReadPropertyBoolean('PVEnabled'));
         $sec = $iv > 0 ? $iv : 60;
         $this->SetTimerInterval('RegTimer', $need ? $sec * 1000 : 0);
@@ -958,6 +1019,14 @@ class SamsungKlima extends IPSModule
 
         $this->RegisterVariableBoolean('RegActive', 'Regelung aktiv', '~Switch', 80);
         $this->EnableAction('RegActive');
+
+        // Eingang für den Energiemanager: „für diesen Raum ist gerade PV-Überschuss
+        // reserviert". Braucht eine Aktion, damit der Manager sie schalten darf.
+        $this->RegisterVariableBoolean('PVRelease', 'PV-Freigabe', '~Switch', 85);
+        $this->EnableAction('PVRelease');
+        IPS_SetHidden($this->GetIDForIdent('PVRelease'),
+            !($this->ReadPropertyBoolean('PVEnabled')
+              && $this->ReadPropertyInteger('PVSource') === self::PVSRC_MANAGER));
 
         $this->RegisterVariableBoolean('Verbunden', 'Verbunden', '~Switch', 90);
         $this->RegisterVariableString('ErrorText', 'Fehler', '', 100);

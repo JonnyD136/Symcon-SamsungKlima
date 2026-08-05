@@ -159,6 +159,11 @@ class SamsungWaermepumpe extends IPSModule
     // trotzdem um ein bis zwei Zehntel voneinander ab.
     private const SPREAD_MIN = 0.5;
 
+    // Takt der PV-Warmwasserprüfung (s) und Abstand zum Sollwert, ab dem eine
+    // erzwungene Ladung als erledigt gilt (der letzte Zehntelgrad braucht lange).
+    private const DHW_CHECK      = 60;
+    private const DHW_DONE_DELTA = 1.0;
+
     // ═══════════════════════════════════════════════════════════════
     //  LIFECYCLE
     // ═══════════════════════════════════════════════════════════════
@@ -191,13 +196,27 @@ class SamsungWaermepumpe extends IPSModule
         $this->RegisterPropertyFloat('HeatComfort', 22.0);
         $this->RegisterPropertyFloat('HeatEco', 19.0);
 
+        // PV-geführte Warmwasserbereitung: Der Energiemanager sagt über die
+        // Variable „Warmwasser PV-Freigabe", wann Überschuss da ist. Damit an
+        // trüben Tagen trotzdem warmes Wasser da ist, kommen zwei Notbremsen
+        // dazu, die den Manager überstimmen (er kann sie nicht ausschalten,
+        // weil er nur seine eigene Freigabe kennt).
+        $this->RegisterPropertyBoolean('DHWPVEnabled', false);
+        $this->RegisterPropertyFloat('DHWCriticalTemp', 45.0);
+        $this->RegisterPropertyString('DHWDeadline', '18:00');
+        $this->RegisterPropertyFloat('DHWDeadlineTemp', 50.0);
+        $this->RegisterPropertyString('DHWEndTime', '21:00');
+
         $this->RegisterAttributeString('CmdMap', '{}');
         $this->RegisterAttributeString('StatMap', '{}');
         $this->RegisterAttributeString('WatchedVars', '[]');
         $this->RegisterAttributeInteger('HeatEventID', 0);
         $this->RegisterAttributeInteger('DHWEventID', 0);
+        $this->RegisterAttributeInteger('DHWForced', 0);      // Notbremse hält bis Speicher voll
+        $this->RegisterAttributeString('DHWForcedReason', '');
 
         $this->RegisterTimer('PollTimer', 0, 'SAMW_PollStatus($_IPS["TARGET"]);');
+        $this->RegisterTimer('DHWTimer', 0, 'SAMW_UpdateDHWDemand($_IPS["TARGET"]);');
 
         $this->RegisterVariables();
     }
@@ -208,9 +227,13 @@ class SamsungWaermepumpe extends IPSModule
         $this->RegisterVariables();
         $this->RegisterMessage(0, IPS_KERNELMESSAGE);
 
+        $this->SetTimerInterval('DHWTimer',
+            $this->ReadPropertyBoolean('DHWPVEnabled') ? self::DHW_CHECK * 1000 : 0);
+
         if (IPS_GetKernelRunlevel() == KR_READY) {
             $this->Discover();
             $this->SetupSchedules();
+            $this->UpdateDHWDemand();
         }
     }
 
@@ -379,6 +402,12 @@ class SamsungWaermepumpe extends IPSModule
                 $this->WriteKNX('DHWPower', (bool) $Value);
                 $this->SetValueIfChanged('DHWPower', (bool) $Value);
                 break;
+            case 'DHWPVRelease':
+                // Nur merken – die Entscheidung fällt in UpdateDHWDemand(), weil
+                // dort auch die beiden Notbremsen mitgewertet werden.
+                $this->SetValueIfChanged('DHWPVRelease', (bool) $Value);
+                $this->UpdateDHWDemand();
+                break;
             case 'DHWMode':
                 $this->WriteKNX('DHWMode', (int) $Value);
                 $this->SetValueIfChanged('DHWMode', (int) $Value);
@@ -428,6 +457,102 @@ class SamsungWaermepumpe extends IPSModule
     public function ApplyDHWState(int $State)
     {
         $this->RequestAction('DHWPower', $State === self::DHW_ON);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  PV-GEFÜHRTE WARMWASSERBEREITUNG
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * Entscheidet zyklisch, ob die Warmwasserbereitung freigegeben wird.
+     *
+     * Regel: Normalfall ist der PV-Überschuss – die Freigabe kommt vom
+     * Energiemanager, der das Budget auf alle Verbraucher verteilt. Zwei
+     * Notbremsen überstimmen ihn, damit an trüben Tagen niemand kalt duscht:
+     *   1. Speicher unter der kritischen Temperatur → sofort laden.
+     *   2. Ab der Deadline (z. B. 18:00) noch zu kalt → nachladen.
+     * Beide rasten ein, bis der Speicher wirklich voll ist; sonst würde die
+     * Ladung bei 45,1 °C sofort wieder abbrechen und die Wärmepumpe takten.
+     */
+    public function UpdateDHWDemand()
+    {
+        if (!$this->ReadPropertyBoolean('DHWPVEnabled')) {
+            return;
+        }
+
+        $ist = (float) $this->GetValueSafe('DHWTemp', 0.0);
+        if ($ist <= 0.0) {
+            return;   // noch kein Messwert vom Bus – nichts erzwingen
+        }
+        $soll   = (float) $this->GetValueSafe('DHWSetpoint', 50.0);
+        $fertig = $soll - self::DHW_DONE_DELTA;
+
+        $forced = $this->ReadAttributeInteger('DHWForced') === 1;
+        $grund  = $this->ReadAttributeString('DHWForcedReason');
+        $imFenster = $this->InDeadlineWindow();
+
+        if ($forced && ($ist >= $fertig || ($grund === 'Deadline' && !$imFenster))) {
+            $forced = false;
+            $grund  = '';
+        }
+        if (!$forced) {
+            if ($ist <= $this->ReadPropertyFloat('DHWCriticalTemp')) {
+                $forced = true;
+                $grund  = 'Kritisch';
+            } elseif ($imFenster && $ist < $this->ReadPropertyFloat('DHWDeadlineTemp')) {
+                $forced = true;
+                $grund  = 'Deadline';
+            }
+        }
+        $this->WriteAttributeInteger('DHWForced', $forced ? 1 : 0);
+        $this->WriteAttributeString('DHWForcedReason', $grund);
+
+        $pv   = (bool) $this->GetValueSafe('DHWPVRelease', false);
+        $want = $forced || $pv;
+
+        if ($forced) {
+            $text = $grund === 'Kritisch'
+                ? sprintf('Notheizung – Speicher unter %.0f °C', $this->ReadPropertyFloat('DHWCriticalTemp'))
+                : sprintf('Nachheizen ab %s', $this->ReadPropertyString('DHWDeadline'));
+        } elseif ($pv) {
+            $text = 'PV-Überschuss';
+        } else {
+            $text = 'Wartet auf PV-Überschuss';
+        }
+        $this->SetValueIfChanged('DHWDemandReason', $text);
+
+        // Nur bei echter Abweichung schreiben: jeder Write ist ein KNX-Telegramm,
+        // und die Rückmeldung des MDT kommt ohnehin über MirrorStatus zurück.
+        if ((bool) $this->GetValueSafe('DHWPower', false) !== $want) {
+            $this->RequestAction('DHWPower', $want);
+            $this->LogMessage('Warmwasser ' . ($want ? 'EIN' : 'AUS') . ' – ' . $text
+                . sprintf(' (Ist %.1f °C)', $ist), KL_MESSAGE);
+        }
+    }
+
+    /** Liegt die aktuelle Uhrzeit im Nachheiz-Fenster [Deadline, Ende)? */
+    private function InDeadlineWindow(): bool
+    {
+        $von = $this->ParseTime($this->ReadPropertyString('DHWDeadline'));
+        $bis = $this->ParseTime($this->ReadPropertyString('DHWEndTime'));
+        if ($von === null || $bis === null) {
+            return false;
+        }
+        $jetzt = (int) date('H') * 60 + (int) date('i');
+        // Fenster über Mitternacht (z. B. 22:00–05:00) mitnehmen
+        return $von <= $bis ? ($jetzt >= $von && $jetzt < $bis)
+                            : ($jetzt >= $von || $jetzt < $bis);
+    }
+
+    /** "HH:MM" → Minuten seit Mitternacht, sonst null. */
+    private function ParseTime(string $s): ?int
+    {
+        if (!preg_match('/^\s*(\d{1,2}):(\d{2})\s*$/', $s, $m)) {
+            return null;
+        }
+        $h = (int) $m[1];
+        $i = (int) $m[2];
+        return ($h < 24 && $i < 60) ? $h * 60 + $i : null;
     }
 
     /** Legt die beiden Wochenpläne an (falls aktiviert) bzw. deaktiviert sie. */
@@ -756,6 +881,14 @@ class SamsungWaermepumpe extends IPSModule
         $this->RegisterVariableFloat('DHWSetpoint', 'Warmwasser-Sollwert', 'SAMW.SetDHW', $p += 10);
         $this->EnableAction('DHWSetpoint');
         $this->RegisterVariableFloat('DHWTemp', 'Warmwasser-Ist', '~Temperature', $p += 10);
+
+        // Eingang für den Energiemanager + Anzeige, warum gerade geladen wird
+        $this->RegisterVariableBoolean('DHWPVRelease', 'Warmwasser PV-Freigabe', '~Switch', $p += 10);
+        $this->EnableAction('DHWPVRelease');
+        $this->RegisterVariableString('DHWDemandReason', 'Warmwasser-Anforderung', '', $p += 10);
+        $pv = $this->ReadPropertyBoolean('DHWPVEnabled');
+        IPS_SetHidden($this->GetIDForIdent('DHWPVRelease'), !$pv);
+        IPS_SetHidden($this->GetIDForIdent('DHWDemandReason'), !$pv);
 
         // ── Komfortfunktionen ──
         $this->RegisterVariableBoolean('Silent', 'Silent-Betrieb', '~Switch', $p += 10);

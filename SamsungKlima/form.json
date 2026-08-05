@@ -99,7 +99,13 @@
             "caption": "PV-Überschuss-Vorkühlung (optional)",
             "items": [
                 { "type": "CheckBox", "name": "PVEnabled", "caption": "PV-Überschuss in diesen Raum kühlen (z. B. Schlafzimmer ja, Büro nein)" },
-                { "type": "SelectVariable", "name": "PVSurplusVarID", "caption": "PV-Überschuss-Variable (W) – z. B. \"Netz Leistung\" aus dem Sungrow-Modul" },
+                { "type": "Select", "name": "PVSource", "caption": "Wer entscheidet über den Überschuss?", "options": [
+                    { "caption": "Dieses Modul – eigene Schwelle (Felder unten)", "value": 0 },
+                    { "caption": "Energiemanager – über die Variable \"PV-Freigabe\"", "value": 1 }
+                ] },
+                { "type": "Label", "caption": "Sobald mehrere Verbraucher um denselben Überschuss konkurrieren (Warmwasser, weitere Räume), gehört die Entscheidung in den Energiemanager – sonst greifen alle gleichzeitig nach denselben Watt." },
+                { "type": "CheckBox", "name": "PVForceRegulation", "caption": "Bei PV-Freigabe auch kühlen, wenn \"Regelung aktiv\" aus ist (Vorkühlen) – danach wieder aus" },
+                { "type": "SelectVariable", "name": "PVSurplusVarID", "caption": "Nur bei eigener Schwelle: PV-Überschuss-Variable (W) – z. B. \"Netz Leistung\" aus dem Sungrow-Modul" },
                 { "type": "CheckBox", "name": "PVGridSign", "caption": "Variable ist Netzleistung (negativ = Einspeisung/Überschuss)" },
                 { "type": "NumberSpinner", "name": "PVThreshold", "caption": "Ausreichend: Überschuss ≥ erwartete Klima-Leistung (W)", "digits": 0, "minimum": 0, "maximum": 20000 },
                 { "type": "NumberSpinner", "name": "PVHysteresis", "caption": "Abschalt-Hysterese (W unter Schwelle)", "digits": 0, "minimum": 0, "maximum": 5000 },

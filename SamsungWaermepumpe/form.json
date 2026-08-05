@@ -52,6 +52,19 @@
                 { "type": "NumberSpinner", "name": "HeatEco", "caption": "Absenk-Soll (°C)", "digits": 1 },
                 { "type": "CheckBox", "name": "UseDHWSchedule", "caption": "Warmwasserzeiten-Wochenplan verwenden (Ein / Aus)" }
             ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "Warmwasser nach PV-Überschuss (optional)",
+            "items": [
+                { "type": "CheckBox", "name": "DHWPVEnabled", "caption": "Warmwasserbereitung vom Energiemanager freigeben lassen" },
+                { "type": "Label", "caption": "Der Manager schaltet dazu die Variable \"Warmwasser PV-Freigabe\". Ein fester Wochenplan an der Anlage oder im MDT muss dann aus sein – sonst schaltet er alle paar Stunden gegen die PV-Steuerung." },
+                { "type": "NumberSpinner", "name": "DHWCriticalTemp", "caption": "Notheizung: sofort laden unter (°C)", "digits": 1, "minimum": 20, "maximum": 60 },
+                { "type": "ValidationTextBox", "name": "DHWDeadline", "caption": "Spätestens nachheizen ab (HH:MM)", "validate": "^\\d{1,2}:\\d{2}$" },
+                { "type": "NumberSpinner", "name": "DHWDeadlineTemp", "caption": "… wenn der Speicher dann unter (°C) liegt", "digits": 1, "minimum": 20, "maximum": 70 },
+                { "type": "ValidationTextBox", "name": "DHWEndTime", "caption": "Ende des Nachheiz-Fensters (HH:MM)", "validate": "^\\d{1,2}:\\d{2}$" },
+                { "type": "Label", "caption": "Eine einmal gestartete Notladung läuft bis kurz unter den Warmwasser-Sollwert durch – ein Abbruch bei jedem Zehntelgrad würde die Wärmepumpe nur takten lassen." }
+            ]
         }
     ],
     "actions": [

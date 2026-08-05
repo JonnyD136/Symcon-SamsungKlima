@@ -43,6 +43,30 @@ Schaltschwellen `Soll ± Deadband/2`, Anti-Takt über `LastToggle`/`MinToggle`.
 „RegActive"-Variable schaltbar (Szenen/Zeit/Anwesenheit); `TurnOffWhenInactive`
 schaltet die Klima bei Deaktivierung aus.
 
+## PV-Überschuss (Build 22)
+Sobald mehrere Verbraucher um denselben Überschuss konkurrieren, darf **nur eine
+Stelle** das Budget verteilen – sonst greifen alle Räume plus Warmwasser
+gleichzeitig nach denselben Watt. Diese Stelle ist der Symcon-**Energie Manager**;
+die Module liefern ihm nur noch Schaltpunkte.
+
+- **SamsungKlima:** `PVSource` = 1 → `PVActive()` liest statt Schwelle/Verzögerung
+  die eigene Variable **„PV-Freigabe"** (`PVRelease`, mit Aktion – der Manager
+  braucht `requireAction`). Mit `PVForceRegulation` übernimmt eine anliegende
+  Freigabe die Rolle von „Regelung aktiv": auch ein ungeregelter Raum kühlt vor
+  und geht danach wieder aus (`SetPVRelease()`, fallende Flanke → `EnsureOff()`).
+  `EffectiveSetpoint()` senkt nur noch ab, nie an (`min($soll, …)`) – bei
+  Wunsch-Soll unter `PVMinTemp` hätte das Vorkühlen ihn sonst angehoben.
+- **SamsungWaermepumpe:** `DHWPVEnabled` → `UpdateDHWDemand()` (Timer 60 s)
+  verodert die Manager-Freigabe `DHWPVRelease` mit zwei Notbremsen:
+  Speicher unter `DHWCriticalTemp` (sofort) und Deadline-Fenster
+  `DHWDeadline`–`DHWEndTime` unter `DHWDeadlineTemp`. Beide rasten über das
+  Attribut `DHWForced` ein, bis `DHWSetpoint − 1 K` erreicht ist – ohne Latch
+  bräche die Ladung bei 45,1 °C sofort wieder ab und die WP würde takten.
+  Grund der aktuellen Anforderung steht in `DHWDemandReason`.
+- **Voraussetzung:** Der feste Warmwasser-Wochenplan an der Anlage bzw. im MDT
+  (hier 11:00 EIN / 21:00 AUS) muss aus sein, sonst schaltet er gegen die
+  PV-Steuerung.
+
 ## FACE-Konventionen (eingehalten)
 - Klassenname = module.json-„name" ohne Leerzeichen → `SamsungKlima`
 - Timer-Callback in Prefix-Form: `SAMK_Regulate($_IPS["TARGET"])`
