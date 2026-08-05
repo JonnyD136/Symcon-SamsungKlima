@@ -67,6 +67,34 @@ die Module liefern ihm nur noch Schaltpunkte.
   (hier 11:00 EIN / 21:00 AUS) muss aus sein, sonst schaltet er gegen die
   PV-Steuerung.
 
+## Lernen an der Wärmepumpe (Build 28)
+Die MIM liefert **keine Leistungsmessung**, nur den Kompressorstrom *einer*
+Phase. `I × 230 V` lag am Live-Datensatz um **Faktor 2,3–2,9** zu niedrig
+(gemessen ~2900–3600 W statt 1600 W) – Phasenzahl, Leistungsfaktor, Pumpe und
+Heizstab fehlen und stehen in keinem Register. Also gelernt statt geraten:
+
+- **Leistung:** Bei jeder Ladung Hauslast-Ø minus Grundlast (**Median** des
+  Vorlauffensters – ein niedriges Quantil rechnet der WP fremde Last zu und
+  ergab 3862 statt 3558 W). Median über die letzten 10 Ladungen → `Usage` im
+  Energie Manager, Verhältnis zur Modul-Schätzung → Korrekturfaktor auf
+  `PowerElec`. **Achtung: das ändert den angezeigten COP** (von ~5,6 auf ~2,2 –
+  der alte Wert war zu optimistisch).
+- **`DHWPowerNow`** führt über das 3-Wegeventil nur den Warmwasser-Anteil.
+  Als „aktuelle Nutzung" im Manager Pflicht, sonst zählt im Winter die
+  Heizleistung als Warmwasser und der Verbraucher wird grundlos abgeworfen.
+- **Bedarfszeiten:** Abfall > 1,5 K/h (Stillstandsverlust gemessen 0,25 K/h)
+  = Zapfung, gebucht in den Stundenkorb des Wochentags. Der Tag wird gleitend
+  ins Wochenprofil gemischt – mit `alpha = max(0,3; 1/(n+1))`, sonst käme der
+  erste beobachtete Tag nur zu 30 % an und das Profil bliebe dauerhaft zu tief.
+  `ProfileFor()` zieht wenig beobachtete Wochentage zum Gesamtschnitt.
+- **Genutzt wird das zweifach:** Die Deadline wandert nach vorne, wenn typisch
+  früher gezapft wird – aber **nur bei Bedarf nach `DHWEarliestDeadline`**. Die
+  Morgendusche deckt die Ladung vom Vortag; zöge sie mit, würde mittags bei
+  jeder Wolke Netzstrom gezogen statt auf die Sonne zu warten. Und die
+  Auslöseschwelle steigt, wenn bis zum nächsten PV-Fenster viel ansteht.
+- `LearnFromArchive()` rechnet die Historie mit denselben Regeln durch,
+  `DumpLearning()` zeigt Profil, Messreihen und die abgeleitete Deadline.
+
 ## FACE-Konventionen (eingehalten)
 - Klassenname = module.json-„name" ohne Leerzeichen → `SamsungKlima`
 - Timer-Callback in Prefix-Form: `SAMK_Regulate($_IPS["TARGET"])`
