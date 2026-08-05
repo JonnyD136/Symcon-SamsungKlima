@@ -65,11 +65,28 @@
                 { "type": "ValidationTextBox", "name": "DHWEndTime", "caption": "Ende des Nachheiz-Fensters (HH:MM)", "validate": "^\\d{1,2}:\\d{2}$" },
                 { "type": "Label", "caption": "Eine einmal gestartete Notladung läuft bis kurz unter den Warmwasser-Sollwert durch – ein Abbruch bei jedem Zehntelgrad würde die Wärmepumpe nur takten lassen." }
             ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "Lernen: Ladeleistung und Bedarfszeiten (optional)",
+            "items": [
+                { "type": "CheckBox", "name": "DHWLearn", "caption": "Aus dem Betrieb lernen" },
+                { "type": "Label", "caption": "Die Anlage meldet nur den Kompressorstrom einer Phase – ohne Phasenzahl, Leistungsfaktor, Pumpe und Heizstab. Das Modul vergleicht darum bei jeder Ladung die Hauslast mit der eigenen Schätzung und lernt daraus einen Korrekturfaktor sowie die tatsächliche Ladeleistung." },
+                { "type": "SelectVariable", "name": "HouseLoadVarID", "caption": "Hausverbrauch (W) – z. B. \"Lastleistung\" aus dem Wechselrichter" },
+                { "type": "Label", "caption": "Bedarfszeiten: Fällt der Speicher schneller als der Stillstandsverlust, war das eine Zapfung. Daraus entsteht ein Wochenprofil, das die Nachheiz-Deadline nach vorne zieht, wenn typisch früher gezapft wird – nach hinten nie." },
+                { "type": "ValidationTextBox", "name": "DHWEarliestDeadline", "caption": "Vormittags nicht erzwingen – frühestens ab (HH:MM)", "validate": "^\\d{1,2}:\\d{2}$" },
+                { "type": "NumberSpinner", "name": "DHWLeadTime", "caption": "Vorlauf vor der typischen Zapfung (Minuten)", "minimum": 0, "maximum": 480 },
+                { "type": "NumberSpinner", "name": "DHWMinUsable", "caption": "Mindest-Nutztemperatur am Ende einer Zapfung (°C)", "digits": 1, "minimum": 25, "maximum": 50 },
+                { "type": "SelectInstance", "name": "EnergyManagerID", "caption": "Energie Manager, dessen Verbraucher nachgeführt wird (optional)" },
+                { "type": "ValidationTextBox", "name": "EMConsumerName", "caption": "Name der Verbraucher-Zeile dort (exakt wie eingetragen)" }
+            ]
         }
     ],
     "actions": [
         { "type": "Button", "caption": "Gruppenadressen neu einlesen", "onClick": "SAMW_Discover($id);" },
         { "type": "Button", "caption": "Status jetzt abfragen", "onClick": "SAMW_PollStatus($id);" },
+        { "type": "Button", "caption": "Aus dem Archiv anlernen", "onClick": "SAMW_LearnFromArchive($id, 30);" },
+        { "type": "Button", "caption": "Gelerntes verwerfen", "onClick": "SAMW_ResetLearning($id);" },
         { "type": "Label", "caption": "Nach Anlegen oder Ändern der KNX-Gruppenadressen hier neu einlesen. Der Instanz-Status zeigt, ob die Objekte gefunden wurden." }
     ],
     "status": [

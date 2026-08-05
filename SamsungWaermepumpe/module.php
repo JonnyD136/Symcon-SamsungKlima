@@ -164,6 +164,22 @@ class SamsungWaermepumpe extends IPSModule
     private const DHW_CHECK      = 60;
     private const DHW_DONE_DELTA = 1.0;
 
+    // ── Lernen ──
+    // Der Stillstandsverlust des Speichers liegt gemessen bei rund 0,25 K/h.
+    // Alles ab 1,5 K/h ist mit Abstand darüber und damit eine echte Zapfung.
+    private const DRAW_RATE        = 1.5;    // K/h
+    private const DRAW_SIGNIFICANT = 3.0;    // K je Stunde, ab wann ein Korb als Bedarf zählt
+    private const PROFILE_ALPHA    = 0.30;   // Gewicht eines neuen Tages im Wochenprofil
+    private const PV_HOUR          = 10;     // ab dieser Stunde kann die PV wieder laden
+    private const SAMPLES_MAX      = 10;     // Ladungen im Gedächtnis (Median daraus)
+    private const LOAD_RING        = 15;     // Hauslast-Messpunkte für die Grundlast
+    private const CHARGE_MIN_N     = 5;      // Mindest-Messpunkte für eine gültige Ladung
+    private const CHARGE_MIN_K     = 3.0;    // Mindest-Temperaturhub für eine gültige Ladung
+
+    private const WD = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+
+    private const ARCHIVE_GUID = '{43192F0B-135B-4CE7-A0A7-1475603F3060}';
+
     // ═══════════════════════════════════════════════════════════════
     //  LIFECYCLE
     // ═══════════════════════════════════════════════════════════════
@@ -207,6 +223,16 @@ class SamsungWaermepumpe extends IPSModule
         $this->RegisterPropertyFloat('DHWDeadlineTemp', 50.0);
         $this->RegisterPropertyString('DHWEndTime', '21:00');
 
+        // Lernen: Ladeleistung aus dem Hauslast-Sprung, Bedarfszeiten aus dem
+        // Temperaturverlauf des Speichers.
+        $this->RegisterPropertyBoolean('DHWLearn', false);
+        $this->RegisterPropertyInteger('HouseLoadVarID', 0);
+        $this->RegisterPropertyInteger('DHWLeadTime', 60);
+        $this->RegisterPropertyString('DHWEarliestDeadline', '12:00');
+        $this->RegisterPropertyFloat('DHWMinUsable', 38.0);
+        $this->RegisterPropertyInteger('EnergyManagerID', 0);
+        $this->RegisterPropertyString('EMConsumerName', '');
+
         $this->RegisterAttributeString('CmdMap', '{}');
         $this->RegisterAttributeString('StatMap', '{}');
         $this->RegisterAttributeString('WatchedVars', '[]');
@@ -214,9 +240,18 @@ class SamsungWaermepumpe extends IPSModule
         $this->RegisterAttributeInteger('DHWEventID', 0);
         $this->RegisterAttributeInteger('DHWForced', 0);      // Notbremse hält bis Speicher voll
         $this->RegisterAttributeString('DHWForcedReason', '');
+        $this->RegisterAttributeString('LoadRing', '[]');     // letzte Hauslast-Messpunkte
+        $this->RegisterAttributeString('Charge', '{}');       // laufende Vermessung
+        $this->RegisterAttributeString('PowerSamples', '[]'); // Ø-Leistung je Ladung
+        $this->RegisterAttributeString('FactorSamples', '[]');// Korrekturfaktor je Ladung
+        $this->RegisterAttributeString('DrawToday', '{}');    // Zapfungen des laufenden Tages
+        $this->RegisterAttributeString('Profile', '[]');      // Wochenprofil [7][24] in K
+        $this->RegisterAttributeFloat('LastTemp', 0.0);
+        $this->RegisterAttributeInteger('LastTempTs', 0);
 
         $this->RegisterTimer('PollTimer', 0, 'SAMW_PollStatus($_IPS["TARGET"]);');
-        $this->RegisterTimer('DHWTimer', 0, 'SAMW_UpdateDHWDemand($_IPS["TARGET"]);');
+        $this->RegisterTimer('DHWTimer', 0,
+            'SAMW_LearnStep($_IPS["TARGET"]); SAMW_UpdateDHWDemand($_IPS["TARGET"]);');
 
         $this->RegisterVariables();
     }
@@ -227,12 +262,13 @@ class SamsungWaermepumpe extends IPSModule
         $this->RegisterVariables();
         $this->RegisterMessage(0, IPS_KERNELMESSAGE);
 
-        $this->SetTimerInterval('DHWTimer',
-            $this->ReadPropertyBoolean('DHWPVEnabled') ? self::DHW_CHECK * 1000 : 0);
+        $laeuft = $this->ReadPropertyBoolean('DHWPVEnabled') || $this->ReadPropertyBoolean('DHWLearn');
+        $this->SetTimerInterval('DHWTimer', $laeuft ? self::DHW_CHECK * 1000 : 0);
 
         if (IPS_GetKernelRunlevel() == KR_READY) {
             $this->Discover();
             $this->SetupSchedules();
+            $this->LearnStep();
             $this->UpdateDHWDemand();
         }
     }
@@ -490,6 +526,7 @@ class SamsungWaermepumpe extends IPSModule
         $forced = $this->ReadAttributeInteger('DHWForced') === 1;
         $grund  = $this->ReadAttributeString('DHWForcedReason');
         $imFenster = $this->InDeadlineWindow();
+        [$dlMin, $dlTemp] = $this->EffectiveDeadline();
 
         if ($forced && ($ist >= $fertig || ($grund === 'Deadline' && !$imFenster))) {
             $forced = false;
@@ -499,7 +536,7 @@ class SamsungWaermepumpe extends IPSModule
             if ($ist <= $this->ReadPropertyFloat('DHWCriticalTemp')) {
                 $forced = true;
                 $grund  = 'Kritisch';
-            } elseif ($imFenster && $ist < $this->ReadPropertyFloat('DHWDeadlineTemp')) {
+            } elseif ($imFenster && $ist < $dlTemp) {
                 $forced = true;
                 $grund  = 'Deadline';
             }
@@ -513,7 +550,7 @@ class SamsungWaermepumpe extends IPSModule
         if ($forced) {
             $text = $grund === 'Kritisch'
                 ? sprintf('Notheizung – Speicher unter %.0f °C', $this->ReadPropertyFloat('DHWCriticalTemp'))
-                : sprintf('Nachheizen ab %s', $this->ReadPropertyString('DHWDeadline'));
+                : sprintf('Nachheizen ab %02d:%02d (unter %.1f °C)', (int) ($dlMin / 60), $dlMin % 60, $dlTemp);
         } elseif ($pv) {
             $text = 'PV-Überschuss';
         } else {
@@ -533,7 +570,7 @@ class SamsungWaermepumpe extends IPSModule
     /** Liegt die aktuelle Uhrzeit im Nachheiz-Fenster [Deadline, Ende)? */
     private function InDeadlineWindow(): bool
     {
-        $von = $this->ParseTime($this->ReadPropertyString('DHWDeadline'));
+        [$von, ] = $this->EffectiveDeadline();
         $bis = $this->ParseTime($this->ReadPropertyString('DHWEndTime'));
         if ($von === null || $bis === null) {
             return false;
@@ -542,6 +579,482 @@ class SamsungWaermepumpe extends IPSModule
         // Fenster über Mitternacht (z. B. 22:00–05:00) mitnehmen
         return $von <= $bis ? ($jetzt >= $von && $jetzt < $bis)
                             : ($jetzt >= $von || $jetzt < $bis);
+    }
+
+    /**
+     * Nachheiz-Deadline und Auslöse-Temperatur – mit gelerntem Bedarfsprofil
+     * beides angepasst, ohne Profil exakt die konfigurierten Werte.
+     *
+     * Die Deadline kann nur nach VORNE wandern: Wer typisch um 16:00 badet, dem
+     * hilft ein Nachheizen ab 18:00 nichts. Nach hinten darf sie nie, sonst
+     * würde ein Lernfehler den Speicher kalt laufen lassen. Vormittags wird
+     * grundsätzlich nicht erzwungen (DHWEarliestDeadline) – da lädt die PV.
+     *
+     * Die Temperatur ist nur die Auslöseschwelle; geheizt wird danach ohnehin
+     * bis zum Warmwasser-Sollwert. Steht viel Zapfung bevor, wird die Schwelle
+     * angehoben, damit abends wirklich nachgeladen wird statt knapp daneben.
+     *
+     * @return array{0:?int,1:float}  Deadline in Minuten seit Mitternacht, Schwelle in °C
+     */
+    private function EffectiveDeadline(): array
+    {
+        $min  = $this->ParseTime($this->ReadPropertyString('DHWDeadline'));
+        $temp = $this->ReadPropertyFloat('DHWDeadlineTemp');
+        if (!$this->ReadPropertyBoolean('DHWLearn') || $min === null) {
+            return [$min, $temp];
+        }
+
+        $ready = $this->ReadyByMinutes();
+        if ($ready !== null) {
+            $frueh = $this->ParseTime($this->ReadPropertyString('DHWEarliestDeadline')) ?? 12 * 60;
+            $min = max($frueh, min($min, $ready - $this->ReadPropertyInteger('DHWLeadTime')));
+        }
+
+        $erwartet = $this->ExpectedDrawAfter($min);
+        if ($erwartet > 0) {
+            $soll = (float) $this->GetValueSafe('DHWSetpoint', 50.0);
+            $temp = max($temp, min($soll - 0.5, $this->ReadPropertyFloat('DHWMinUsable') + $erwartet));
+        }
+        return [$min, round($temp, 1)];
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  LERNEN: LADELEISTUNG UND BEDARFSZEITEN
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * Einmal je Timer-Takt: Hauslast mitschreiben, Zapfungen erkennen, eine
+     * laufende Ladung vermessen und den Tageswechsel ins Profil einrechnen.
+     */
+    public function LearnStep()
+    {
+        if (!$this->ReadPropertyBoolean('DHWLearn')) {
+            return;
+        }
+        $this->SampleHouseLoad();
+        $ist = (float) $this->GetValueSafe('DHWTemp', 0.0);
+        if ($ist > 0) {
+            $this->DetectDraw($ist);
+            $this->TrackCharge($ist);
+        }
+        $this->RollOverDay();
+    }
+
+    /**
+     * Anlauf aus dem Archiv: rechnet die vorhandene Historie einmal durch,
+     * damit das Modul nicht wochenlang mit Startwerten arbeitet. Nutzt dieselben
+     * Regeln wie der Live-Betrieb, nur auf geloggten Werten statt auf dem Takt.
+     * Voraussetzung: Speichertemperatur, Kompressorstrom und Hauslast sind
+     * archiviert. Ergebnis ersetzt das bisher Gelernte.
+     */
+    public function LearnFromArchive(int $Tage = 30)
+    {
+        $ac = @IPS_GetInstanceListByModuleID(self::ARCHIVE_GUID)[0] ?? 0;
+        $temp = @$this->GetIDForIdent('DHWTemp');
+        $last = $this->ReadPropertyInteger('HouseLoadVarID');
+        if (!$ac || !$temp || !AC_GetLoggingStatus($ac, $temp)) {
+            echo "Kein Archiv oder Warmwasser-Ist nicht archiviert.\n";
+            return;
+        }
+        $von = time() - max(1, $Tage) * 86400;
+        $t = array_reverse(AC_GetLoggedValues($ac, $temp, $von, time(), 0));
+        if (count($t) < 20) {
+            echo "Zu wenig Historie (" . count($t) . " Werte).\n";
+            return;
+        }
+        $this->ResetLearning();
+
+        // ── Zapfungen → Wochenprofil ──
+        $tage = [];                                  // 'Y-m-d' => [24] Kelvin
+        for ($i = 1; $i < count($t); $i++) {
+            $std = ($t[$i]['TimeStamp'] - $t[$i - 1]['TimeStamp']) / 3600;
+            if ($std <= 0 || $std > 1) {
+                continue;
+            }
+            $ab = $t[$i - 1]['Value'] - $t[$i]['Value'];
+            if ($ab / $std < self::DRAW_RATE) {
+                continue;
+            }
+            $tag = date('Y-m-d', $t[$i]['TimeStamp']);
+            $tage[$tag] = $tage[$tag] ?? array_fill(0, 24, 0.0);
+            $tage[$tag][(int) date('G', $t[$i]['TimeStamp'])] += round($ab, 2);
+        }
+        $prof = array_fill(0, 7, array_fill(0, 24, 0.0));
+        ksort($tage);
+        foreach ($tage as $tag => $k) {
+            $wd = (int) date('w', strtotime($tag));
+            for ($h = 0; $h < 24; $h++) {
+                $prof[$wd][$h] = round($prof[$wd][$h] * (1 - self::PROFILE_ALPHA)
+                                     + $k[$h] * self::PROFILE_ALPHA, 2);
+            }
+        }
+        $this->WriteAttributeString('Profile', json_encode($prof));
+
+        // ── Ladungen → Leistung und Korrekturfaktor ──
+        $amp   = @$this->GetIDForIdent('CompCurrent');
+        $mains = $this->ReadPropertyFloat('Mains');
+        $ladungen = 0;
+        foreach ($this->ArchiveCharges($t) as [$a, $b, $hub]) {
+            if ($hub < self::CHARGE_MIN_K || !$last || !AC_GetLoggingStatus($ac, $last)) {
+                continue;
+            }
+            $grund = $this->Quantile(array_column(AC_GetLoggedValues($ac, $last, $a - 2400, $a - 120, 0), 'Value'), 0.2);
+            $inn   = array_column(AC_GetLoggedValues($ac, $last, $a, $b, 0), 'Value');
+            if ($grund === null || count($inn) < self::CHARGE_MIN_N) {
+                continue;
+            }
+            $leistung = array_sum($inn) / count($inn) - $grund;
+            if ($leistung < 300 || $leistung > 12000) {
+                continue;
+            }
+            $this->PushSample('PowerSamples', round($leistung));
+            $ladungen++;
+
+            if ($amp && AC_GetLoggingStatus($ac, $amp)) {
+                $a2 = array_column(AC_GetLoggedValues($ac, $amp, $a, $b, 0), 'Value');
+                $a2 = array_values(array_filter($a2, fn ($x) => $x > 0.2));
+                if ($a2) {
+                    $roh = array_sum($a2) / count($a2) * $mains;
+                    $f = $roh > 300 ? $leistung / $roh : 0;
+                    if ($f >= 0.5 && $f <= 5.0) {
+                        $this->PushSample('FactorSamples', round($f, 3));
+                    }
+                }
+            }
+        }
+        $this->PublishLearned();
+        printf("Archiv ausgewertet: %d Tage mit Zapfungen, %d vermessene Ladungen.\n"
+             . "Gelernt: %.0f W Ladeleistung, Korrekturfaktor %.2f\n%s\n",
+            count($tage), $ladungen, $this->MedianOf('PowerSamples') ?? 0,
+            $this->PowerCorrection(), GetValue($this->GetIDForIdent('DHWReadyBy')));
+    }
+
+    /** Ladephasen aus dem Temperaturverlauf: zusammenhängender Anstieg. */
+    private function ArchiveCharges(array $t): array
+    {
+        $out = []; $von = null; $start = null;
+        for ($i = 1; $i < count($t); $i++) {
+            $steigt = $t[$i]['Value'] > $t[$i - 1]['Value'] + 0.05;
+            if ($steigt && $von === null) {
+                $von = $t[$i - 1]['TimeStamp'];
+                $start = $t[$i - 1]['Value'];
+            } elseif (!$steigt && $von !== null) {
+                if ($t[$i - 1]['TimeStamp'] - $von > 300) {
+                    $out[] = [$von, $t[$i - 1]['TimeStamp'], $t[$i - 1]['Value'] - $start];
+                }
+                $von = null;
+            }
+        }
+        return $out;
+    }
+
+    private function Quantile(array $w, float $q): ?float
+    {
+        if (count($w) < 3) {
+            return null;
+        }
+        sort($w);
+        return (float) $w[(int) (count($w) * $q)];
+    }
+
+    /** Alles Gelernte verwerfen und von vorn anfangen. */
+    public function ResetLearning()
+    {
+        foreach (['LoadRing'=>'[]', 'Charge'=>'{}', 'PowerSamples'=>'[]',
+                  'FactorSamples'=>'[]', 'DrawToday'=>'{}', 'Profile'=>'[]'] as $a => $leer) {
+            $this->WriteAttributeString($a, $leer);
+        }
+        $this->WriteAttributeFloat('LastTemp', 0.0);
+        $this->WriteAttributeInteger('LastTempTs', 0);
+        $this->SetValueIfChanged('DHWPowerLearned', 0.0);
+        $this->SetValueIfChanged('PowerCorrLearned', 1.0);
+        $this->SetValueIfChanged('DHWReadyBy', 'noch keine Daten');
+        $this->SetValueIfChanged('DHWProfileText', '');
+        $this->LogMessage('Gelernte Warmwasser-Daten verworfen', KL_MESSAGE);
+    }
+
+    /** Ringpuffer der Hauslast – liefert die Grundlast vor einer Ladung. */
+    private function SampleHouseLoad(): void
+    {
+        $vid = $this->ReadPropertyInteger('HouseLoadVarID');
+        if ($vid <= 0 || !IPS_VariableExists($vid)) {
+            return;
+        }
+        $ring = json_decode($this->ReadAttributeString('LoadRing'), true) ?: [];
+        $ring[] = [time(), (float) GetValue($vid)];
+        if (count($ring) > self::LOAD_RING) {
+            $ring = array_slice($ring, -self::LOAD_RING);
+        }
+        $this->WriteAttributeString('LoadRing', json_encode($ring));
+    }
+
+    /**
+     * Zapfung = der Speicher fällt deutlich schneller als der Stillstandsverlust
+     * (gemessen rund 0,25 K/h). Wird als Kelvin in den Stundenkorb des Tages
+     * gebucht; die Kelvin sind das Maß für „wie viel Warmwasser".
+     */
+    private function DetectDraw(float $ist): void
+    {
+        $vorher = $this->ReadAttributeFloat('LastTemp');
+        $ts     = $this->ReadAttributeInteger('LastTempTs');
+        $this->WriteAttributeFloat('LastTemp', $ist);
+        $this->WriteAttributeInteger('LastTempTs', time());
+
+        if ($vorher <= 0 || $ts <= 0) {
+            return;
+        }
+        $std = (time() - $ts) / 3600;
+        if ($std <= 0 || $std > 1) {
+            return;                                  // Lücke (Neustart) nicht werten
+        }
+        $rate = ($vorher - $ist) / $std;             // K/h Abfall
+        if ($rate < self::DRAW_RATE || (bool) $this->GetValueSafe('DHWPower', false)) {
+            return;
+        }
+        $tag = json_decode($this->ReadAttributeString('DrawToday'), true) ?: [];
+        if (($tag['tag'] ?? '') !== date('Y-m-d')) {
+            $tag = ['tag' => date('Y-m-d'), 'wd' => (int) date('w'), 'k' => array_fill(0, 24, 0.0)];
+        }
+        $tag['k'][(int) date('G')] += round($vorher - $ist, 2);
+        $this->WriteAttributeString('DrawToday', json_encode($tag));
+    }
+
+    /**
+     * Vermisst eine Warmwasserladung: Grundlast beim Start merken, während der
+     * Ladung Hauslast und Modul-Schätzung mitteln, am Ende beides auswerten.
+     * Gemessen wird erst, wenn der Speicher wirklich steigt – die ersten Minuten
+     * nach der Freigabe passiert nur Umschalten und Anlaufen.
+     */
+    private function TrackCharge(float $ist): void
+    {
+        $c = json_decode($this->ReadAttributeString('Charge'), true) ?: [];
+        $an = (bool) $this->GetValueSafe('DHWPower', false);
+        $vid = $this->ReadPropertyInteger('HouseLoadVarID');
+        $last = ($vid > 0 && IPS_VariableExists($vid)) ? (float) GetValue($vid) : null;
+
+        if ($an && empty($c['aktiv'])) {
+            $c = ['aktiv'=>1, 'base'=>$this->RingQuantile(0.2), 'tStart'=>$ist,
+                  'sum'=>0.0, 'n'=>0, 'estSum'=>0.0, 'ts'=>time()];
+            $this->WriteAttributeString('Charge', json_encode($c));
+            return;
+        }
+        if (!$an) {
+            if (!empty($c['aktiv'])) {
+                $this->FinishCharge($c, $ist);
+                $this->WriteAttributeString('Charge', '{}');
+            }
+            return;
+        }
+        // läuft: nur zählen, wenn der Speicher gegenüber dem Start gestiegen ist
+        if ($last !== null && $ist > ($c['tStart'] ?? 99) + 0.3) {
+            $c['sum']    += $last;
+            $c['estSum'] += (float) $this->GetValueSafe('PowerElec', 0.0);
+            $c['n']++;
+            $this->WriteAttributeString('Charge', json_encode($c));
+        }
+    }
+
+    /** Ladung beendet: Leistung und Korrekturfaktor ableiten, wenn belastbar. */
+    private function FinishCharge(array $c, float $ende): void
+    {
+        $n = (int) ($c['n'] ?? 0);
+        $base = $c['base'] ?? null;
+        if ($n < self::CHARGE_MIN_N || $base === null || ($ende - ($c['tStart'] ?? 0)) < self::CHARGE_MIN_K) {
+            return;                                   // zu kurz oder keine Grundlast
+        }
+        $leistung = $c['sum'] / $n - $base;
+        if ($leistung < 300 || $leistung > 12000) {
+            return;                                   // unplausibel, verwerfen
+        }
+        $this->PushSample('PowerSamples', round($leistung));
+
+        // Korrekturfaktor nur, wenn die Modul-Schätzung überhaupt etwas gemeldet hat
+        $est = $c['estSum'] / $n;
+        $k   = $this->PowerCorrection();
+        if ($est > 300 && $k > 0) {
+            $roh = $est / $k;                         // Schätzung ohne bisherige Korrektur
+            $f = $leistung / $roh;
+            if ($f >= 0.5 && $f <= 5.0) {
+                $this->PushSample('FactorSamples', round($f, 3));
+            }
+        }
+        $this->PublishLearned();
+        $this->LogMessage(sprintf('Warmwasserladung vermessen: %.0f W über %d Messpunkte '
+            . '(Grundlast %.0f W, Speicher +%.1f K) → gelernt %.0f W, Faktor %.2f',
+            $leistung, $n, $base, $ende - $c['tStart'],
+            $this->MedianOf('PowerSamples') ?? 0, $this->PowerCorrection()), KL_MESSAGE);
+    }
+
+    /** Tageswechsel: Zapfungen des Vortags gleitend ins Wochenprofil mischen. */
+    private function RollOverDay(): void
+    {
+        $tag = json_decode($this->ReadAttributeString('DrawToday'), true) ?: [];
+        if (!$tag || ($tag['tag'] ?? '') === date('Y-m-d')) {
+            return;
+        }
+        $prof = $this->Profile();
+        $wd = (int) $tag['wd'];
+        for ($h = 0; $h < 24; $h++) {
+            $prof[$wd][$h] = round($prof[$wd][$h] * (1 - self::PROFILE_ALPHA)
+                                 + ((float) $tag['k'][$h]) * self::PROFILE_ALPHA, 2);
+        }
+        $this->WriteAttributeString('Profile', json_encode($prof));
+        $this->WriteAttributeString('DrawToday', json_encode(
+            ['tag'=>date('Y-m-d'), 'wd'=>(int) date('w'), 'k'=>array_fill(0, 24, 0.0)]));
+        $this->PublishLearned();
+    }
+
+    // ── Zugriff auf das Gelernte ──────────────────────────────────────
+
+    private function Profile(): array
+    {
+        $p = json_decode($this->ReadAttributeString('Profile'), true);
+        if (!is_array($p) || count($p) !== 7) {
+            $p = array_fill(0, 7, array_fill(0, 24, 0.0));
+        }
+        return $p;
+    }
+
+    /** Gelernter Korrekturfaktor für die Leistungsschätzung (1.0 = ungelernt). */
+    private function PowerCorrection(): float
+    {
+        $m = $this->MedianOf('FactorSamples');
+        return ($m === null || $m <= 0) ? 1.0 : $m;
+    }
+
+    /** Erste Stunde des Tages mit nennenswertem Bedarf, in Minuten. */
+    private function ReadyByMinutes(): ?int
+    {
+        $p = $this->Profile()[(int) date('w')];
+        for ($h = 0; $h < 24; $h++) {
+            if ($p[$h] >= self::DRAW_SIGNIFICANT) {
+                return $h * 60;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Erwartete Zapfung (K) ab der Deadline bis zum nächsten PV-Fenster morgen –
+     * so viel muss der Speicher über die Nacht bringen.
+     */
+    private function ExpectedDrawAfter(?int $abMinute): float
+    {
+        if ($abMinute === null) {
+            return 0.0;
+        }
+        $p = $this->Profile();
+        $summe = 0.0;
+        for ($h = (int) ($abMinute / 60); $h < 24; $h++) {
+            $summe += $p[(int) date('w')][$h];
+        }
+        $morgen = ((int) date('w') + 1) % 7;
+        for ($h = 0; $h < self::PV_HOUR; $h++) {
+            $summe += $p[$morgen][$h];
+        }
+        return round($summe, 1);
+    }
+
+    private function PushSample(string $attr, float $wert): void
+    {
+        $s = json_decode($this->ReadAttributeString($attr), true) ?: [];
+        $s[] = $wert;
+        if (count($s) > self::SAMPLES_MAX) {
+            $s = array_slice($s, -self::SAMPLES_MAX);
+        }
+        $this->WriteAttributeString($attr, json_encode($s));
+    }
+
+    private function MedianOf(string $attr): ?float
+    {
+        $s = json_decode($this->ReadAttributeString($attr), true) ?: [];
+        if (!$s) {
+            return null;
+        }
+        sort($s);
+        return (float) $s[(int) (count($s) / 2)];
+    }
+
+    private function RingQuantile(float $q): ?float
+    {
+        $ring = json_decode($this->ReadAttributeString('LoadRing'), true) ?: [];
+        if (count($ring) < 3) {
+            return null;
+        }
+        $w = array_column($ring, 1);
+        sort($w);
+        return (float) $w[(int) (count($w) * $q)];
+    }
+
+    /** Gelernte Werte in die Anzeigevariablen und in den Energiemanager schreiben. */
+    private function PublishLearned(): void
+    {
+        $w = $this->MedianOf('PowerSamples');
+        if ($w !== null) {
+            $this->SetValueIfChanged('DHWPowerLearned', (float) $w);
+            $this->PushUsageToEnergyManager((float) $w);
+        }
+        $this->SetValueIfChanged('PowerCorrLearned', round($this->PowerCorrection(), 2));
+
+        $ready = $this->ReadyByMinutes();
+        [$dl, $temp] = $this->EffectiveDeadline();
+        $this->SetValueIfChanged('DHWReadyBy', $ready === null
+            ? 'noch keine Daten'
+            : sprintf('%s ab %02d:00 · nachheizen ab %02d:%02d bei unter %.1f °C',
+                self::WD[(int) date('w')], (int) ($ready / 60), (int) ($dl / 60), $dl % 60, $temp));
+
+        $prof = $this->Profile();
+        $zeilen = [];
+        for ($d = 1; $d <= 7; $d++) {
+            $wd = $d % 7;                              // Anzeige Mo…So
+            $summe = array_sum($prof[$wd]);
+            if ($summe < 0.5) {
+                $zeilen[] = self::WD[$wd] . ' –';
+                continue;
+            }
+            $spitze = array_search(max($prof[$wd]), $prof[$wd], true);
+            $zeilen[] = sprintf('%s %.0f K (Spitze %02d:00)', self::WD[$wd], $summe, $spitze);
+        }
+        $this->SetValueIfChanged('DHWProfileText', implode(' · ', $zeilen));
+    }
+
+    /**
+     * Gelernte Ladeleistung als „Maximale Nutzung" in den Energie Manager
+     * schreiben. Erst ab 10 % Abweichung, weil jedes Schreiben die Instanz neu
+     * lädt – und die Zeile wird über ihren Namen gesucht, damit die Reihenfolge
+     * der Verbraucher frei bleibt.
+     */
+    private function PushUsageToEnergyManager(float $watt): void
+    {
+        $em   = $this->ReadPropertyInteger('EnergyManagerID');
+        $name = trim($this->ReadPropertyString('EMConsumerName'));
+        if ($em <= 0 || $name === '' || !IPS_InstanceExists($em)) {
+            return;
+        }
+        $cfg = json_decode(IPS_GetConfiguration($em), true);
+        if (!isset($cfg['Consumers'])) {
+            return;
+        }
+        $liste = json_decode($cfg['Consumers'], true) ?: [];
+        $geaendert = false;
+        foreach ($liste as &$zeile) {
+            if (($zeile['Name'] ?? '') !== $name) {
+                continue;
+            }
+            $alt = (float) ($zeile['Usage'] ?? 0);
+            if ($alt <= 0 || abs($watt - $alt) / max($alt, 1.0) >= 0.10) {
+                $zeile['Usage'] = round($watt);
+                $geaendert = true;
+            }
+        }
+        unset($zeile);
+        if (!$geaendert) {
+            return;
+        }
+        IPS_SetProperty($em, 'Consumers', json_encode($liste, JSON_UNESCAPED_UNICODE));
+        IPS_ApplyChanges($em);
+        $this->LogMessage(sprintf('Energie Manager #%d: "%s" auf %.0f W nachgeführt',
+            $em, $name, $watt), KL_MESSAGE);
     }
 
     /** "HH:MM" → Minuten seit Mitternacht, sonst null. */
@@ -807,7 +1320,12 @@ class SamsungWaermepumpe extends IPSModule
             : 0.0;
         $this->SetValueIfChanged('HeatPower', (float) $heat);
 
-        $elec = $amp > 0 ? round($amp * $mains + $standby) : 0.0;
+        // Der Kompressorstrom ist ein Phasenstrom. Wie viele Phasen dahinter
+        // hängen und welcher Leistungsfaktor gilt, steht nirgends im Register –
+        // deshalb der gelernte Korrekturfaktor: Er wird aus dem gemessenen
+        // Hauslast-Sprung während der Warmwasserladungen bestimmt (LearnPower()).
+        $k = $this->PowerCorrection();
+        $elec = $amp > 0 ? round($amp * $mains * $k + $standby) : 0.0;
         $this->SetValueIfChanged('PowerElec', (float) $elec);
 
         $this->SetValueIfChanged('COP', ($elec > 100 && $heat > 0) ? round($heat / $elec, 2) : 0.0);
@@ -889,6 +1407,16 @@ class SamsungWaermepumpe extends IPSModule
         $pv = $this->ReadPropertyBoolean('DHWPVEnabled');
         IPS_SetHidden($this->GetIDForIdent('DHWPVRelease'), !$pv);
         IPS_SetHidden($this->GetIDForIdent('DHWDemandReason'), !$pv);
+
+        // ── Gelerntes ──
+        $this->RegisterVariableFloat('DHWPowerLearned', 'Warmwasser-Ladeleistung (gelernt)', '~Watt', $p += 10);
+        $this->RegisterVariableFloat('PowerCorrLearned', 'Leistungs-Korrekturfaktor (gelernt)', 'SAMW.Factor', $p += 10);
+        $this->RegisterVariableString('DHWReadyBy', 'Warmwasser typisch gebraucht ab', '', $p += 10);
+        $this->RegisterVariableString('DHWProfileText', 'Warmwasser-Bedarfsprofil', '', $p += 10);
+        $lern = $this->ReadPropertyBoolean('DHWLearn');
+        foreach (['DHWPowerLearned', 'PowerCorrLearned', 'DHWReadyBy', 'DHWProfileText'] as $i) {
+            IPS_SetHidden($this->GetIDForIdent($i), !$lern);
+        }
 
         // ── Komfortfunktionen ──
         $this->RegisterVariableBoolean('Silent', 'Silent-Betrieb', '~Switch', $p += 10);
@@ -1001,6 +1529,12 @@ class SamsungWaermepumpe extends IPSModule
             IPS_CreateVariableProfile('SAMW.COP', 2);
             IPS_SetVariableProfileIcon('SAMW.COP', 'Graph');
             IPS_SetVariableProfileDigits('SAMW.COP', 2);
+        }
+        if (!IPS_VariableProfileExists('SAMW.Factor')) {
+            IPS_CreateVariableProfile('SAMW.Factor', 2);
+            IPS_SetVariableProfileIcon('SAMW.Factor', 'Calculator');
+            IPS_SetVariableProfileDigits('SAMW.Factor', 2);
+            IPS_SetVariableProfileText('SAMW.Factor', '× ', '');
         }
         if (!IPS_VariableProfileExists('SAMW.Valve3')) {
             IPS_CreateVariableProfile('SAMW.Valve3', 1);
