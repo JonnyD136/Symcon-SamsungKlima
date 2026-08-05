@@ -768,6 +768,42 @@ class SamsungWaermepumpe extends IPSModule
         return (float) $w[(int) (count($w) * $q)];
     }
 
+    /** Was steckt gerade im Gedächtnis? Für Kontrolle und Fehlersuche. */
+    public function DumpLearning()
+    {
+        $prof = $this->Profile();
+        $zahl = $this->DayCounts();
+        echo "Zapfprofil (K je Stunde, roh je Wochentag)\n     ";
+        for ($h = 0; $h < 24; $h++) {
+            printf('%5d', $h);
+        }
+        echo "\n";
+        for ($d = 1; $d <= 7; $d++) {
+            $wd = $d % 7;
+            printf('%-3s %d', self::WD[$wd], (int) ($zahl[$wd] ?? 0));
+            for ($h = 0; $h < 24; $h++) {
+                printf('%5s', $prof[$wd][$h] > 0.05 ? number_format($prof[$wd][$h], 1) : '·');
+            }
+            echo "\n";
+        }
+        $wdHeute = (int) date('w');
+        $eff = $this->ProfileFor($wdHeute);
+        printf("\nHeute %s wirksam (mit Rückfall auf den Gesamtschnitt):\n     ", self::WD[$wdHeute]);
+        for ($h = 0; $h < 24; $h++) {
+            printf('%5s', $eff[$h] > 0.05 ? number_format($eff[$h], 1) : '·');
+        }
+        [$dl, $temp] = $this->EffectiveDeadline();
+        printf("\n\nLadeleistungen (W) : %s  → Median %s\n", $this->ReadAttributeString('PowerSamples'),
+            $this->MedianOf('PowerSamples') ?? '–');
+        printf("Korrekturfaktoren  : %s  → Median %.2f\n", $this->ReadAttributeString('FactorSamples'),
+            $this->PowerCorrection());
+        printf("Erster Bedarf      : %s\n", $this->ReadyByMinutes() === null ? '–'
+            : sprintf('%02d:00', (int) ($this->ReadyByMinutes() / 60)));
+        printf("Erwartete Zapfung ab %02d:%02d bis morgen %02d:00 : %.1f K\n",
+            (int) ($dl / 60), $dl % 60, self::PV_HOUR, $this->ExpectedDrawAfter($dl));
+        printf("Wirksame Deadline  : %02d:%02d bei unter %.1f °C\n", (int) ($dl / 60), $dl % 60, $temp);
+    }
+
     /** Alles Gelernte verwerfen und von vorn anfangen. */
     public function ResetLearning()
     {

@@ -1,96 +1,318 @@
 {
     "elements": [
-        { "type": "Label", "caption": "Samsung Wärmepumpe EHS Mono (AE120BXYDGG) über MIM-B19N #2 und MDT SCN-MBGRTU.01 auf KNX. Die Gruppenadressen werden anhand von Haupt-/Mittelgruppe automatisch gefunden – laut ETS-Export liegt die Wärmepumpe auf HG 5 / MG 2. Die Subadressen folgen der MDT-Kanalnummerierung und haben Lücken: 31–36 (Lüftung/ERV) und 41 (Umwälzpumpe PWM) sind nicht angelegt." },
+        {
+            "type": "Label",
+            "caption": "Samsung Wärmepumpe EHS Mono (AE120BXYDGG) über MIM-B19N #2 und MDT SCN-MBGRTU.01 auf KNX. Die Gruppenadressen werden anhand von Haupt-/Mittelgruppe automatisch gefunden – laut ETS-Export liegt die Wärmepumpe auf HG 5 / MG 2. Die Subadressen folgen der MDT-Kanalnummerierung und haben Lücken: 31–36 (Lüftung/ERV) und 41 (Umwälzpumpe PWM) sind nicht angelegt."
+        },
         {
             "type": "RowLayout",
             "items": [
-                { "type": "NumberSpinner", "name": "Hauptgruppe", "caption": "KNX Hauptgruppe", "minimum": 0, "maximum": 31 },
-                { "type": "NumberSpinner", "name": "Mittelgruppe", "caption": "KNX Mittelgruppe", "minimum": 0, "maximum": 7 }
-            ]
-        },
-        {
-            "type": "ExpansionPanel", "caption": "Sollwertgrenzen",
-            "items": [
-                { "type": "Label", "caption": "Grenzen für die schreibbaren Sollwerte. Das MDT klammert nicht selbst – ein Wert außerhalb des Geräte-Bereichs wird von der Anlage verworfen oder falsch übernommen." },
-                { "type": "NumberSpinner", "name": "RoomSollMin", "caption": "Raum-Soll min (°C)", "minimum": 5, "maximum": 40 },
-                { "type": "NumberSpinner", "name": "RoomSollMax", "caption": "Raum-Soll max (°C)", "minimum": 5, "maximum": 40 },
-                { "type": "NumberSpinner", "name": "FlowSollMin", "caption": "Vorlauf-Soll min (°C)", "minimum": 5, "maximum": 70 },
-                { "type": "NumberSpinner", "name": "FlowSollMax", "caption": "Vorlauf-Soll max (°C)", "minimum": 5, "maximum": 70 },
-                { "type": "NumberSpinner", "name": "DHWSollMin", "caption": "Warmwasser-Soll min (°C)", "minimum": 20, "maximum": 80 },
-                { "type": "NumberSpinner", "name": "DHWSollMax", "caption": "Warmwasser-Soll max (°C)", "minimum": 20, "maximum": 80 }
-            ]
-        },
-        {
-            "type": "ExpansionPanel", "caption": "Statusabfrage (Rückmeldung vom Gerät)",
-            "items": [
-                { "type": "Label", "caption": "Das MDT sendet Status-Objekte nur, wenn das in der ETS parametriert ist. Ohne Abfrage bleibt die Anzeige auf dem letzten eigenen Befehl stehen – Änderungen am Bedienteil der Wärmepumpe kämen nie an. Das Modul fragt die Status-Gruppenadressen darum aktiv per KNX-Leseanforderung ab. Ist zyklisches Senden in der ETS aktiv, genügt hier ein träges Intervall (900 s) als Netz." },
-                { "type": "NumberSpinner", "name": "PollInterval", "caption": "Abfrage-Intervall (Sekunden, 0 = aus)", "minimum": 0, "maximum": 3600 }
-            ]
-        },
-        {
-            "type": "ExpansionPanel", "caption": "Leistungs- und COP-Schätzung",
-            "items": [
-                { "type": "Label", "caption": "Die Anlage liefert keinen Wärmemengenzähler. Die Wärmeleistung wird aus Wasserdurchfluss und Spreizung berechnet (Durchfluss × Spreizung × 69,67), die elektrische Leistung aus der Kompressor-Stromaufnahme × Netzspannung. Das lässt Umwälzpumpe, Heizstab und Leistungsfaktor außen vor – der COP ist damit ein Richtwert, kein Messwert." },
-                { "type": "NumberSpinner", "name": "Mains", "caption": "Netzspannung für die Leistungsschätzung (V)", "digits": 0, "minimum": 100, "maximum": 500 },
-                { "type": "NumberSpinner", "name": "StandbyWatt", "caption": "Pauschaler Zuschlag für Pumpe/Elektronik (W)", "digits": 0, "minimum": 0, "maximum": 2000 }
-            ]
-        },
-        {
-            "type": "ExpansionPanel", "caption": "Zeitsteuerung (Wochenpläne)",
-            "items": [
-                { "type": "Label", "caption": "Bei Aktivierung legt das Modul einen Wochenplan als Unterobjekt an. Umschaltzeiten dort frei editierbar." },
-                { "type": "CheckBox", "name": "UseHeatSchedule", "caption": "Heizzeiten-Wochenplan verwenden (Komfort / Absenkung / Aus)" },
                 {
-                    "type": "Select", "name": "ScheduleTarget", "caption": "Worauf der Wochenplan wirkt",
+                    "type": "NumberSpinner",
+                    "name": "Hauptgruppe",
+                    "caption": "KNX Hauptgruppe",
+                    "minimum": 0,
+                    "maximum": 31
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "Mittelgruppe",
+                    "caption": "KNX Mittelgruppe",
+                    "minimum": 0,
+                    "maximum": 7
+                }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "Sollwertgrenzen",
+            "items": [
+                {
+                    "type": "Label",
+                    "caption": "Grenzen für die schreibbaren Sollwerte. Das MDT klammert nicht selbst – ein Wert außerhalb des Geräte-Bereichs wird von der Anlage verworfen oder falsch übernommen."
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "RoomSollMin",
+                    "caption": "Raum-Soll min (°C)",
+                    "minimum": 5,
+                    "maximum": 40
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "RoomSollMax",
+                    "caption": "Raum-Soll max (°C)",
+                    "minimum": 5,
+                    "maximum": 40
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "FlowSollMin",
+                    "caption": "Vorlauf-Soll min (°C)",
+                    "minimum": 5,
+                    "maximum": 70
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "FlowSollMax",
+                    "caption": "Vorlauf-Soll max (°C)",
+                    "minimum": 5,
+                    "maximum": 70
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "DHWSollMin",
+                    "caption": "Warmwasser-Soll min (°C)",
+                    "minimum": 20,
+                    "maximum": 80
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "DHWSollMax",
+                    "caption": "Warmwasser-Soll max (°C)",
+                    "minimum": 20,
+                    "maximum": 80
+                }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "Statusabfrage (Rückmeldung vom Gerät)",
+            "items": [
+                {
+                    "type": "Label",
+                    "caption": "Das MDT sendet Status-Objekte nur, wenn das in der ETS parametriert ist. Ohne Abfrage bleibt die Anzeige auf dem letzten eigenen Befehl stehen – Änderungen am Bedienteil der Wärmepumpe kämen nie an. Das Modul fragt die Status-Gruppenadressen darum aktiv per KNX-Leseanforderung ab. Ist zyklisches Senden in der ETS aktiv, genügt hier ein träges Intervall (900 s) als Netz."
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "PollInterval",
+                    "caption": "Abfrage-Intervall (Sekunden, 0 = aus)",
+                    "minimum": 0,
+                    "maximum": 3600
+                }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "Leistungs- und COP-Schätzung",
+            "items": [
+                {
+                    "type": "Label",
+                    "caption": "Die Anlage liefert keinen Wärmemengenzähler. Die Wärmeleistung wird aus Wasserdurchfluss und Spreizung berechnet (Durchfluss × Spreizung × 69,67), die elektrische Leistung aus der Kompressor-Stromaufnahme × Netzspannung. Das lässt Umwälzpumpe, Heizstab und Leistungsfaktor außen vor – der COP ist damit ein Richtwert, kein Messwert."
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "Mains",
+                    "caption": "Netzspannung für die Leistungsschätzung (V)",
+                    "digits": 0,
+                    "minimum": 100,
+                    "maximum": 500
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "StandbyWatt",
+                    "caption": "Pauschaler Zuschlag für Pumpe/Elektronik (W)",
+                    "digits": 0,
+                    "minimum": 0,
+                    "maximum": 2000
+                }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "Zeitsteuerung (Wochenpläne)",
+            "items": [
+                {
+                    "type": "Label",
+                    "caption": "Bei Aktivierung legt das Modul einen Wochenplan als Unterobjekt an. Umschaltzeiten dort frei editierbar."
+                },
+                {
+                    "type": "CheckBox",
+                    "name": "UseHeatSchedule",
+                    "caption": "Heizzeiten-Wochenplan verwenden (Komfort / Absenkung / Aus)"
+                },
+                {
+                    "type": "Select",
+                    "name": "ScheduleTarget",
+                    "caption": "Worauf der Wochenplan wirkt",
                     "options": [
-                        { "caption": "Raum-Sollwert", "value": 0 },
-                        { "caption": "Vorlauf-Sollwert", "value": 1 }
+                        {
+                            "caption": "Raum-Sollwert",
+                            "value": 0
+                        },
+                        {
+                            "caption": "Vorlauf-Sollwert",
+                            "value": 1
+                        }
                     ]
                 },
-                { "type": "Label", "caption": "Achtung: Im Heizkurvenbetrieb hat der Raum-Sollwert an dieser Anlage keine Funktion – dann ist der Vorlauf-Sollwert der Hebel, und Komfort/Absenkung müssen Vorlauftemperaturen sein (z. B. 35 / 28 statt 22 / 19)." },
-                { "type": "NumberSpinner", "name": "HeatComfort", "caption": "Komfort-Soll (°C)", "digits": 1 },
-                { "type": "NumberSpinner", "name": "HeatEco", "caption": "Absenk-Soll (°C)", "digits": 1 },
-                { "type": "CheckBox", "name": "UseDHWSchedule", "caption": "Warmwasserzeiten-Wochenplan verwenden (Ein / Aus)" }
+                {
+                    "type": "Label",
+                    "caption": "Achtung: Im Heizkurvenbetrieb hat der Raum-Sollwert an dieser Anlage keine Funktion – dann ist der Vorlauf-Sollwert der Hebel, und Komfort/Absenkung müssen Vorlauftemperaturen sein (z. B. 35 / 28 statt 22 / 19)."
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "HeatComfort",
+                    "caption": "Komfort-Soll (°C)",
+                    "digits": 1
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "HeatEco",
+                    "caption": "Absenk-Soll (°C)",
+                    "digits": 1
+                },
+                {
+                    "type": "CheckBox",
+                    "name": "UseDHWSchedule",
+                    "caption": "Warmwasserzeiten-Wochenplan verwenden (Ein / Aus)"
+                }
             ]
         },
         {
             "type": "ExpansionPanel",
             "caption": "Warmwasser nach PV-Überschuss (optional)",
             "items": [
-                { "type": "CheckBox", "name": "DHWPVEnabled", "caption": "Warmwasserbereitung vom Energiemanager freigeben lassen" },
-                { "type": "Label", "caption": "Der Manager schaltet dazu die Variable \"Warmwasser PV-Freigabe\". Ein fester Wochenplan an der Anlage oder im MDT muss dann aus sein – sonst schaltet er alle paar Stunden gegen die PV-Steuerung." },
-                { "type": "NumberSpinner", "name": "DHWCriticalTemp", "caption": "Notheizung: sofort laden unter (°C)", "digits": 1, "minimum": 20, "maximum": 60 },
-                { "type": "ValidationTextBox", "name": "DHWDeadline", "caption": "Spätestens nachheizen ab (HH:MM)", "validate": "^\\d{1,2}:\\d{2}$" },
-                { "type": "NumberSpinner", "name": "DHWDeadlineTemp", "caption": "… wenn der Speicher dann unter (°C) liegt", "digits": 1, "minimum": 20, "maximum": 70 },
-                { "type": "ValidationTextBox", "name": "DHWEndTime", "caption": "Ende des Nachheiz-Fensters (HH:MM)", "validate": "^\\d{1,2}:\\d{2}$" },
-                { "type": "Label", "caption": "Eine einmal gestartete Notladung läuft bis kurz unter den Warmwasser-Sollwert durch – ein Abbruch bei jedem Zehntelgrad würde die Wärmepumpe nur takten lassen." }
+                {
+                    "type": "CheckBox",
+                    "name": "DHWPVEnabled",
+                    "caption": "Warmwasserbereitung vom Energiemanager freigeben lassen"
+                },
+                {
+                    "type": "Label",
+                    "caption": "Der Manager schaltet dazu die Variable \"Warmwasser PV-Freigabe\". Ein fester Wochenplan an der Anlage oder im MDT muss dann aus sein – sonst schaltet er alle paar Stunden gegen die PV-Steuerung."
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "DHWCriticalTemp",
+                    "caption": "Notheizung: sofort laden unter (°C)",
+                    "digits": 1,
+                    "minimum": 20,
+                    "maximum": 60
+                },
+                {
+                    "type": "ValidationTextBox",
+                    "name": "DHWDeadline",
+                    "caption": "Spätestens nachheizen ab (HH:MM)",
+                    "validate": "^\\d{1,2}:\\d{2}$"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "DHWDeadlineTemp",
+                    "caption": "… wenn der Speicher dann unter (°C) liegt",
+                    "digits": 1,
+                    "minimum": 20,
+                    "maximum": 70
+                },
+                {
+                    "type": "ValidationTextBox",
+                    "name": "DHWEndTime",
+                    "caption": "Ende des Nachheiz-Fensters (HH:MM)",
+                    "validate": "^\\d{1,2}:\\d{2}$"
+                },
+                {
+                    "type": "Label",
+                    "caption": "Eine einmal gestartete Notladung läuft bis kurz unter den Warmwasser-Sollwert durch – ein Abbruch bei jedem Zehntelgrad würde die Wärmepumpe nur takten lassen."
+                }
             ]
         },
         {
             "type": "ExpansionPanel",
             "caption": "Lernen: Ladeleistung und Bedarfszeiten (optional)",
             "items": [
-                { "type": "CheckBox", "name": "DHWLearn", "caption": "Aus dem Betrieb lernen" },
-                { "type": "Label", "caption": "Die Anlage meldet nur den Kompressorstrom einer Phase – ohne Phasenzahl, Leistungsfaktor, Pumpe und Heizstab. Das Modul vergleicht darum bei jeder Ladung die Hauslast mit der eigenen Schätzung und lernt daraus einen Korrekturfaktor sowie die tatsächliche Ladeleistung." },
-                { "type": "SelectVariable", "name": "HouseLoadVarID", "caption": "Hausverbrauch (W) – z. B. \"Lastleistung\" aus dem Wechselrichter" },
-                { "type": "Label", "caption": "Bedarfszeiten: Fällt der Speicher schneller als der Stillstandsverlust, war das eine Zapfung. Daraus entsteht ein Wochenprofil, das die Nachheiz-Deadline nach vorne zieht, wenn typisch früher gezapft wird – nach hinten nie." },
-                { "type": "ValidationTextBox", "name": "DHWEarliestDeadline", "caption": "Vormittags nicht erzwingen – frühestens ab (HH:MM)", "validate": "^\\d{1,2}:\\d{2}$" },
-                { "type": "NumberSpinner", "name": "DHWLeadTime", "caption": "Vorlauf vor der typischen Zapfung (Minuten)", "minimum": 0, "maximum": 480 },
-                { "type": "NumberSpinner", "name": "DHWMinUsable", "caption": "Mindest-Nutztemperatur am Ende einer Zapfung (°C)", "digits": 1, "minimum": 25, "maximum": 50 },
-                { "type": "SelectInstance", "name": "EnergyManagerID", "caption": "Energie Manager, dessen Verbraucher nachgeführt wird (optional)" },
-                { "type": "ValidationTextBox", "name": "EMConsumerName", "caption": "Name der Verbraucher-Zeile dort (exakt wie eingetragen)" }
+                {
+                    "type": "CheckBox",
+                    "name": "DHWLearn",
+                    "caption": "Aus dem Betrieb lernen"
+                },
+                {
+                    "type": "Label",
+                    "caption": "Die Anlage meldet nur den Kompressorstrom einer Phase – ohne Phasenzahl, Leistungsfaktor, Pumpe und Heizstab. Das Modul vergleicht darum bei jeder Ladung die Hauslast mit der eigenen Schätzung und lernt daraus einen Korrekturfaktor sowie die tatsächliche Ladeleistung."
+                },
+                {
+                    "type": "SelectVariable",
+                    "name": "HouseLoadVarID",
+                    "caption": "Hausverbrauch (W) – z. B. \"Lastleistung\" aus dem Wechselrichter"
+                },
+                {
+                    "type": "Label",
+                    "caption": "Bedarfszeiten: Fällt der Speicher schneller als der Stillstandsverlust, war das eine Zapfung. Daraus entsteht ein Wochenprofil, das die Nachheiz-Deadline nach vorne zieht, wenn typisch früher gezapft wird – nach hinten nie."
+                },
+                {
+                    "type": "ValidationTextBox",
+                    "name": "DHWEarliestDeadline",
+                    "caption": "Vormittags nicht erzwingen – frühestens ab (HH:MM)",
+                    "validate": "^\\d{1,2}:\\d{2}$"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "DHWLeadTime",
+                    "caption": "Vorlauf vor der typischen Zapfung (Minuten)",
+                    "minimum": 0,
+                    "maximum": 480
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "DHWMinUsable",
+                    "caption": "Mindest-Nutztemperatur am Ende einer Zapfung (°C)",
+                    "digits": 1,
+                    "minimum": 25,
+                    "maximum": 50
+                },
+                {
+                    "type": "SelectInstance",
+                    "name": "EnergyManagerID",
+                    "caption": "Energie Manager, dessen Verbraucher nachgeführt wird (optional)"
+                },
+                {
+                    "type": "ValidationTextBox",
+                    "name": "EMConsumerName",
+                    "caption": "Name der Verbraucher-Zeile dort (exakt wie eingetragen)"
+                }
             ]
         }
     ],
     "actions": [
-        { "type": "Button", "caption": "Gruppenadressen neu einlesen", "onClick": "SAMW_Discover($id);" },
-        { "type": "Button", "caption": "Status jetzt abfragen", "onClick": "SAMW_PollStatus($id);" },
-        { "type": "Button", "caption": "Aus dem Archiv anlernen", "onClick": "SAMW_LearnFromArchive($id, 30);" },
-        { "type": "Button", "caption": "Gelerntes verwerfen", "onClick": "SAMW_ResetLearning($id);" },
-        { "type": "Label", "caption": "Nach Anlegen oder Ändern der KNX-Gruppenadressen hier neu einlesen. Der Instanz-Status zeigt, ob die Objekte gefunden wurden." }
+        {
+            "type": "Button",
+            "caption": "Gruppenadressen neu einlesen",
+            "onClick": "SAMW_Discover($id);"
+        },
+        {
+            "type": "Button",
+            "caption": "Status jetzt abfragen",
+            "onClick": "SAMW_PollStatus($id);"
+        },
+        {
+            "type": "Button",
+            "caption": "Aus dem Archiv anlernen",
+            "onClick": "SAMW_LearnFromArchive($id, 30);"
+        },
+        {
+            "type": "Button",
+            "caption": "Gelerntes anzeigen",
+            "onClick": "SAMW_DumpLearning($id);"
+        },
+        {
+            "type": "Button",
+            "caption": "Gelerntes verwerfen",
+            "onClick": "SAMW_ResetLearning($id);"
+        },
+        {
+            "type": "Label",
+            "caption": "Nach Anlegen oder Ändern der KNX-Gruppenadressen hier neu einlesen. Der Instanz-Status zeigt, ob die Objekte gefunden wurden."
+        }
     ],
     "status": [
-        { "code": 102, "icon": "active", "caption": "Aktiv – Gruppenadressen gefunden" },
-        { "code": 201, "icon": "inactive", "caption": "Gruppenadressen nicht gefunden – Haupt-/Mittelgruppe und Configurator-Import prüfen" }
+        {
+            "code": 102,
+            "icon": "active",
+            "caption": "Aktiv – Gruppenadressen gefunden"
+        },
+        {
+            "code": 201,
+            "icon": "inactive",
+            "caption": "Gruppenadressen nicht gefunden – Haupt-/Mittelgruppe und Configurator-Import prüfen"
+        }
     ]
 }
