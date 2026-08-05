@@ -249,6 +249,7 @@ class SamsungWaermepumpe extends IPSModule
         $this->RegisterAttributeString('DayCounts', '[]');    // gesehene Tage je Wochentag
         $this->RegisterAttributeFloat('LastTemp', 0.0);
         $this->RegisterAttributeInteger('LastTempTs', 0);
+        $this->RegisterAttributeFloat('LastPushed', 0.0);
 
         $this->RegisterTimer('PollTimer', 0, 'SAMW_PollStatus($_IPS["TARGET"]);');
         $this->RegisterTimer('DHWTimer', 0,
@@ -644,6 +645,7 @@ class SamsungWaermepumpe extends IPSModule
             $this->TrackCharge($ist);
         }
         $this->RollOverDay();
+        $this->PublishLearned();
     }
 
     /**
@@ -1053,16 +1055,23 @@ class SamsungWaermepumpe extends IPSModule
         $w = $this->MedianOf('PowerSamples');
         if ($w !== null) {
             $this->SetValueIfChanged('DHWPowerLearned', (float) $w);
-            $this->PushUsageToEnergyManager((float) $w, $emImmer);
+            // Der Takt läuft jede Minute – den Manager nur anfassen, wenn sich
+            // der gelernte Wert überhaupt bewegt hat.
+            if ($emImmer || abs($w - $this->ReadAttributeFloat('LastPushed')) > 0.5) {
+                $this->PushUsageToEnergyManager((float) $w, $emImmer);
+                $this->WriteAttributeFloat('LastPushed', (float) $w);
+            }
         }
         $this->SetValueIfChanged('PowerCorrLearned', round($this->PowerCorrection(), 2));
 
         $ready = $this->ReadyByMinutes();
         [$dl, $temp] = $this->EffectiveDeadline();
+        $erw = $this->ExpectedDrawAfter($dl);
         $this->SetValueIfChanged('DHWReadyBy', $ready === null
             ? 'noch keine Daten'
-            : sprintf('%s ab %02d:00 · nachheizen ab %02d:%02d bei unter %.1f °C',
-                self::WD[(int) date('w')], (int) ($ready / 60), (int) ($dl / 60), $dl % 60, $temp));
+            : sprintf('%s ab %02d:00 · bis zur nächsten Sonne %.0f K erwartet · nachheizen ab %02d:%02d unter %.1f °C',
+                self::WD[(int) date('w')], (int) ($ready / 60), $erw,
+                (int) ($dl / 60), $dl % 60, $temp));
 
         $prof = $this->Profile();
         $zahl = $this->DayCounts();
