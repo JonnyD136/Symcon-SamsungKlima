@@ -1443,9 +1443,15 @@ class SamsungWaermepumpe extends IPSModule
         // Wofür sie läuft, verrät das 3-Wegeventil. Wichtig, weil der COP
         // zwischen Heizen und Warmwasser deutlich auseinanderliegt.
         $ventil = (int) $this->GetValueSafe('ThreeWayValve', 0);
+        $dhw = $laeuft && $ventil === 1;
         $this->SetValueIfChanged('Operation', $laeuft
-            ? ($ventil === 1 ? self::OP_DHW : self::OP_HEAT)
+            ? ($dhw ? self::OP_DHW : self::OP_HEAT)
             : self::OP_STANDBY);
+
+        // Nur der Warmwasser-Anteil. Ein Energiemanager, der die Gesamtleistung
+        // als „aktuelle Nutzung" des Verbrauchers Warmwasser bekäme, würde im
+        // Winter die Heizung mitzählen und den Verbraucher grundlos abwerfen.
+        $this->SetValueIfChanged('DHWPowerNow', $dhw ? (float) $elec : 0.0);
     }
 
     /** Fehlertext aus den drei Fehlercodes und dem Modul-Fehlerstatus. */
@@ -1517,12 +1523,13 @@ class SamsungWaermepumpe extends IPSModule
         IPS_SetHidden($this->GetIDForIdent('DHWDemandReason'), !$pv);
 
         // ── Gelerntes ──
+        $this->RegisterVariableFloat('DHWPowerNow', 'Warmwasser-Leistung (aktuell)', '~Watt', $p += 10);
         $this->RegisterVariableFloat('DHWPowerLearned', 'Warmwasser-Ladeleistung (gelernt)', '~Watt', $p += 10);
         $this->RegisterVariableFloat('PowerCorrLearned', 'Leistungs-Korrekturfaktor (gelernt)', 'SAMW.Factor', $p += 10);
         $this->RegisterVariableString('DHWReadyBy', 'Warmwasser typisch gebraucht ab', '', $p += 10);
         $this->RegisterVariableString('DHWProfileText', 'Warmwasser-Bedarfsprofil', '', $p += 10);
         $lern = $this->ReadPropertyBoolean('DHWLearn');
-        foreach (['DHWPowerLearned', 'PowerCorrLearned', 'DHWReadyBy', 'DHWProfileText'] as $i) {
+        foreach (['DHWPowerNow', 'DHWPowerLearned', 'PowerCorrLearned', 'DHWReadyBy', 'DHWProfileText'] as $i) {
             IPS_SetHidden($this->GetIDForIdent($i), !$lern);
         }
 
