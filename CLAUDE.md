@@ -95,6 +95,16 @@ Heizstab fehlen und stehen in keinem Register. Also gelernt statt geraten:
 - `LearnFromArchive()` rechnet die Historie mit denselben Regeln durch,
   `DumpLearning()` zeigt Profil, Messreihen und die abgeleitete Deadline.
 
+## Bool-Register aus der MIM (Build 29)
+Die erweiterbaren Register liefern gelegentlich den Marker 0xFFFF statt eines
+Werts. Bei **Bool-Datenpunkten ist das gefährlich**: 65535 ist „nicht null" und
+wird über `toBool()` zu EIN — und bleibt dort, bis ein gültiges Telegramm
+kommt. Live passiert am 03.08. mit der Aktivierung der erweiterbaren Register:
+Ersatzheizung stand zwei Tage auf EIN, ohne dass im Hauslastgang ein Heizstab
+zu sehen war. `SetBoolIfPlausible()` nimmt für `BoosterDHW`/`BackupHeater` nur
+noch exakt 0 oder 1 an; `Defrost` und `RemoteLock` hatten schon eigene Filter.
+**Regel: kein neuer Bool-Datenpunkt aus einem Modbus-Register ohne Filter.**
+
 ## FACE-Konventionen (eingehalten)
 - Klassenname = module.json-„name" ohne Leerzeichen → `SamsungKlima`
 - Timer-Callback in Prefix-Form: `SAMK_Regulate($_IPS["TARGET"])`
