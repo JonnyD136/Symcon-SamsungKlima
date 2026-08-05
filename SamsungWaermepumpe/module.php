@@ -1355,11 +1355,13 @@ class SamsungWaermepumpe extends IPSModule
                 $this->UpdateDerived();
                 break;
 
+            // Beide kommen aus den erweiterbaren Registern (PDU 85/86) und sind
+            // dort als reines 0/1 dokumentiert. Alles andere ist der Samsung-
+            // Marker „kein Wert" oder Müll aus einer gestörten Übertragung –
+            // und würde als „nicht null" zu einem hängenden EIN führen.
             case 'BoosterDHW':
-                $this->SetValueIfChanged('BoosterDHW', $this->toBool($value));
-                break;
             case 'BackupHeater':
-                $this->SetValueIfChanged('BackupHeater', $this->toBool($value));
+                $this->SetBoolIfPlausible($ident, $value);
                 break;
 
             case 'RemoteLock':
@@ -1739,5 +1741,27 @@ class SamsungWaermepumpe extends IPSModule
     private function toBool($value): bool
     {
         return is_bool($value) ? $value : (((float) $value) != 0.0);
+    }
+
+    /**
+     * Bool-Register, das nur 0 oder 1 kennt. Ein gestörtes Telegramm liefert
+     * den Samsung-Marker 0xFFFF (oder nach MDT-Skalierung −0,1) – über toBool()
+     * wäre das ein EIN, das bis zum nächsten gültigen Wert stehen bliebe. Ein
+     * unplausibler Wert lässt den bisherigen Zustand darum unangetastet.
+     */
+    private function SetBoolIfPlausible(string $ident, $value): void
+    {
+        if (is_bool($value)) {
+            $this->SetValueIfChanged($ident, $value);
+            return;
+        }
+        $v = (float) $value;
+        if (abs($v) < 0.001) {
+            $this->SetValueIfChanged($ident, false);
+        } elseif (abs($v - 1.0) < 0.001) {
+            $this->SetValueIfChanged($ident, true);
+        } else {
+            $this->SendDebug('MirrorStatus', $ident . ': ' . $v . ' ist kein 0/1 – verworfen', 0);
+        }
     }
 }
