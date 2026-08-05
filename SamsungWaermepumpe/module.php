@@ -94,18 +94,16 @@ class SamsungWaermepumpe extends IPSModule
         'BackupHeater'   => 38,
         'WaterFlow'      => 39,
         'ThreeWayValve'  => 40,
-        'FlowTarget'     => 42,
-        'CurveTarget'    => 43,
-        'WaterZone1'     => 44,
-        'MixValve'       => 45,
         'OutdoorTemp'    => 46,
         'CompFreq'       => 47,
         'CompCurrent'    => 48,
         'HotGas'         => 49,
         'HighPressure'   => 50,
         'LowPressure'    => 51,
-        'OutdoorState'   => 52,
-        'FourWayValve'   => 53,
+        // Sub 42–45 und 52/53 fehlen absichtlich: Vorlauf-Ziel, Heizkurven-Ziel,
+        // Wassertemperatur Zone 1, Mischventil, Betriebszustand Außengerät und
+        // 4-Wege-Ventil haben in der MIM-B19N KEIN Register. Die Kanalliste hatte
+        // sie vorgesehen, die Anlage kennt sie nicht.
     ];
 
     /**
@@ -119,10 +117,6 @@ class SamsungWaermepumpe extends IPSModule
         'ReturnTemp'   => [  5.0,  75.0],
         'FlowTemp'     => [  5.0,  75.0],
         'MCCFlowTemp'  => [  5.0,  75.0],
-        'FlowTarget'   => [  5.0,  75.0],
-        'CurveTarget'  => [  5.0,  75.0],
-        'WaterZone1'   => [  5.0,  75.0],
-        'MixValve'     => [  5.0,  75.0],
         'DHWTemp'      => [  5.0,  85.0],
         'OutdoorTemp'  => [-40.0,  50.0],
         'HotGas'       => [  0.0, 140.0],
@@ -142,7 +136,6 @@ class SamsungWaermepumpe extends IPSModule
     private const LOCK_LOCKED = 25443;   // 0x6363 auf der Fernbedienungssperre
 
     // Betriebszustand Außengerät
-    private const AG_NORMAL = 2;
 
     // Wochenplan-Aktions-IDs
     private const HEAT_COMFORT = 1;
@@ -565,10 +558,6 @@ class SamsungWaermepumpe extends IPSModule
             // ── Temperaturen und Messwerte ──
             case 'RoomTemp':
             case 'MCCFlowTemp':
-            case 'FlowTarget':
-            case 'CurveTarget':
-            case 'WaterZone1':
-            case 'MixValve':
             case 'DHWTemp':
             case 'OutdoorTemp':
             case 'HotGas':
@@ -590,9 +579,12 @@ class SamsungWaermepumpe extends IPSModule
                 break;
 
             case 'CompFreq':
+                // Trägt jetzt „läuft die Anlage" – der Betriebszustand des
+                // Außengeräts ist über Modbus nicht verfügbar.
                 $f = (int) $value;
                 if ($f !== self::NO_VALUE) {
                     $this->SetValueIfChanged('CompFreq', $f);
+                    $this->UpdateDerived();
                 }
                 break;
 
@@ -603,19 +595,10 @@ class SamsungWaermepumpe extends IPSModule
                 $this->SetValueIfChanged('Defrost', $d !== 0 && $d !== 255 && $d !== self::NO_VALUE);
                 break;
 
-            case 'OutdoorState':
-                $s = (int) $value;
-                if ($s !== self::NO_VALUE) {
-                    $this->SetValueIfChanged('OutdoorState', $s);
-                    $this->SetValueIfChanged('Running', $s === self::AG_NORMAL);
-                }
-                break;
-
             case 'ThreeWayValve':
+                // 0 = Heizkreis, 1 = Brauchwasser – trennt die Betriebsarten
                 $this->SetValueIfChanged('ThreeWayValve', (int) $value);
-                break;
-            case 'FourWayValve':
-                $this->SetValueIfChanged('FourWayValve', (int) $value);
+                $this->UpdateDerived();
                 break;
 
             case 'BoosterDHW':
@@ -685,6 +668,18 @@ class SamsungWaermepumpe extends IPSModule
         $this->SetValueIfChanged('PowerElec', (float) $elec);
 
         $this->SetValueIfChanged('COP', ($elec > 100 && $heat > 0) ? round($heat / $elec, 2) : 0.0);
+
+        // „In Betrieb" kommt aus der Kompressorfrequenz. Der Betriebszustand des
+        // Außengeräts wäre der richtige Datenpunkt, ist über Modbus aber nicht
+        // verfügbar – siehe Kommentar an STAT_SUB.
+        $hz = (int) $this->GetValueSafe('CompFreq', 0);
+        $laeuft = $hz > 0;
+        $this->SetValueIfChanged('Running', $laeuft);
+
+        // Wofür sie läuft, verrät das 3-Wegeventil. Wichtig, weil der COP
+        // zwischen Heizen und Warmwasser deutlich auseinanderliegt.
+        $ventil = (int) $this->GetValueSafe('ThreeWayValve', 0);
+        $this->SetValueIfChanged('Operation', $laeuft ? ($ventil === 1 ? 2 : 1) : 0);
     }
 
     /** Fehlertext aus den drei Fehlercodes und dem Modul-Fehlerstatus. */
@@ -717,6 +712,15 @@ class SamsungWaermepumpe extends IPSModule
     private function RegisterVariables(): void
     {
         $this->EnsureProfiles();
+
+        // Altlasten aus Build 17/18 entfernen: für diese Datenpunkte gibt es in der
+        // MIM-B19N kein Register, die Variablen blieben also dauerhaft leer.
+        foreach (['OutdoorState', 'FourWayValve', 'FlowTarget', 'CurveTarget', 'WaterZone1', 'MixValve'] as $alt) {
+            if (@$this->GetIDForIdent($alt)) {
+                $this->UnregisterVariable($alt);
+            }
+        }
+
         $p = 0;
 
         // ── Bedienung ──
@@ -749,25 +753,20 @@ class SamsungWaermepumpe extends IPSModule
         $this->RegisterVariableFloat('FlowTemp', 'Vorlauftemperatur', '~Temperature', $p += 10);
         $this->RegisterVariableFloat('ReturnTemp', 'Rücklauftemperatur', '~Temperature', $p += 10);
         $this->RegisterVariableFloat('Spread', 'Spreizung', 'SAMW.Spread', $p += 10);
-        $this->RegisterVariableFloat('FlowTarget', 'Vorlauf-Ziel (Regler)', '~Temperature', $p += 10);
-        $this->RegisterVariableFloat('CurveTarget', 'Heizkurven-Ziel', '~Temperature', $p += 10);
-        $this->RegisterVariableFloat('WaterZone1', 'Wassertemperatur Zone 1', '~Temperature', $p += 10);
-        $this->RegisterVariableFloat('MixValve', 'Mischventil-Temperatur', '~Temperature', $p += 10);
         $this->RegisterVariableFloat('MCCFlowTemp', 'MCC Vorlauftemperatur', '~Temperature', $p += 10);
         $this->RegisterVariableFloat('WaterFlow', 'Wasserdurchfluss', 'SAMW.Flow', $p += 10);
         $this->RegisterVariableInteger('ThreeWayValve', '3-Wegeventil', 'SAMW.Valve3', $p += 10);
 
         // ── Außengerät ──
         $this->RegisterVariableFloat('OutdoorTemp', 'Außentemperatur', '~Temperature', $p += 10);
-        $this->RegisterVariableInteger('OutdoorState', 'Betriebszustand Außengerät', 'SAMW.AGState', $p += 10);
         $this->RegisterVariableBoolean('Running', 'In Betrieb', '~Switch', $p += 10);
+        $this->RegisterVariableInteger('Operation', 'Läuft für', 'SAMW.Operation', $p += 10);
         $this->RegisterVariableBoolean('Defrost', 'Abtaubetrieb', '~Switch', $p += 10);
         $this->RegisterVariableInteger('CompFreq', 'Kompressorfrequenz', 'SAMW.Hz', $p += 10);
         $this->RegisterVariableFloat('CompCurrent', 'Stromaufnahme Kompressor', '~Ampere', $p += 10);
         $this->RegisterVariableFloat('HotGas', 'Heißgastemperatur', '~Temperature', $p += 10);
         $this->RegisterVariableFloat('HighPressure', 'Hochdruck', 'SAMW.Pressure', $p += 10);
         $this->RegisterVariableFloat('LowPressure', 'Niederdruck', 'SAMW.Pressure', $p += 10);
-        $this->RegisterVariableInteger('FourWayValve', '4-Wege-Ventil', 'SAMW.Valve4', $p += 10);
 
         // ── Zusatzheizungen ──
         $this->RegisterVariableBoolean('BackupHeater', 'Ersatzheizung', '~Switch', $p += 10);
@@ -861,18 +860,12 @@ class SamsungWaermepumpe extends IPSModule
             IPS_SetVariableProfileAssociation('SAMW.Valve3', 0, 'Heizkreis', '', -1);
             IPS_SetVariableProfileAssociation('SAMW.Valve3', 1, 'Speicher', '', -1);
         }
-        if (!IPS_VariableProfileExists('SAMW.Valve4')) {
-            IPS_CreateVariableProfile('SAMW.Valve4', 1);
-            IPS_SetVariableProfileIcon('SAMW.Valve4', 'Shutter');
-            IPS_SetVariableProfileAssociation('SAMW.Valve4', 0, 'Heizen', '', -1);
-            IPS_SetVariableProfileAssociation('SAMW.Valve4', 1, 'Kühlen', '', -1);
-        }
-        if (!IPS_VariableProfileExists('SAMW.AGState')) {
-            IPS_CreateVariableProfile('SAMW.AGState', 1);
-            IPS_SetVariableProfileIcon('SAMW.AGState', 'Information');
-            IPS_SetVariableProfileAssociation('SAMW.AGState', 0, 'Stop', '', -1);
-            IPS_SetVariableProfileAssociation('SAMW.AGState', 2, 'Normalbetrieb', '', -1);
-            IPS_SetVariableProfileAssociation('SAMW.AGState', 5, 'Abtauen', '', -1);
+        if (!IPS_VariableProfileExists('SAMW.Operation')) {
+            IPS_CreateVariableProfile('SAMW.Operation', 1);
+            IPS_SetVariableProfileIcon('SAMW.Operation', 'Information');
+            IPS_SetVariableProfileAssociation('SAMW.Operation', 0, 'Standby', '', -1);
+            IPS_SetVariableProfileAssociation('SAMW.Operation', 1, 'Heizen', '', 0xCC8800);
+            IPS_SetVariableProfileAssociation('SAMW.Operation', 2, 'Warmwasser', '', 0x3399CC);
         }
     }
 
