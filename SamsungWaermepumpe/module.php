@@ -690,9 +690,9 @@ class SamsungWaermepumpe extends IPSModule
         ksort($tage);
         foreach ($tage as $tag => $k) {
             $wd = (int) date('w', strtotime($tag));
+            $alpha = max(self::PROFILE_ALPHA, 1.0 / ($zaehler[$wd] + 1));
             for ($h = 0; $h < 24; $h++) {
-                $prof[$wd][$h] = round($prof[$wd][$h] * (1 - self::PROFILE_ALPHA)
-                                     + $k[$h] * self::PROFILE_ALPHA, 2);
+                $prof[$wd][$h] = round($prof[$wd][$h] * (1 - $alpha) + $k[$h] * $alpha, 2);
             }
             $zaehler[$wd] = min(20, $zaehler[$wd] + 1);
         }
@@ -731,7 +731,7 @@ class SamsungWaermepumpe extends IPSModule
                 }
             }
         }
-        $this->PublishLearned();
+        $this->PublishLearned(true);
         printf("Archiv ausgewertet: %d Tage mit Zapfungen, %d vermessene Ladungen.\n"
              . "Gelernt: %.0f W Ladeleistung, Korrekturfaktor %.2f\n%s\n",
             count($tage), $ladungen, $this->MedianOf('PowerSamples') ?? 0,
@@ -903,9 +903,15 @@ class SamsungWaermepumpe extends IPSModule
         }
         $prof = $this->Profile();
         $wd = (int) $tag['wd'];
+        // Die Glättung startet bei null: Mit festem Alpha käme der erste
+        // beobachtete Tag nur zu 30 % an und das Profil läge dauerhaft zu
+        // niedrig. Solange wenige Tage vorliegen, zählt darum der laufende
+        // Mittelwert (1/n), später übernimmt das Alpha.
+        $n = (int) ($this->DayCounts()[$wd] ?? 0);
+        $alpha = max(self::PROFILE_ALPHA, 1.0 / ($n + 1));
         for ($h = 0; $h < 24; $h++) {
-            $prof[$wd][$h] = round($prof[$wd][$h] * (1 - self::PROFILE_ALPHA)
-                                 + ((float) $tag['k'][$h]) * self::PROFILE_ALPHA, 2);
+            $prof[$wd][$h] = round($prof[$wd][$h] * (1 - $alpha)
+                                 + ((float) $tag['k'][$h]) * $alpha, 2);
         }
         $this->WriteAttributeString('Profile', json_encode($prof));
         $zaehler = $this->DayCounts();
@@ -1042,12 +1048,12 @@ class SamsungWaermepumpe extends IPSModule
     }
 
     /** Gelernte Werte in die Anzeigevariablen und in den Energiemanager schreiben. */
-    private function PublishLearned(): void
+    private function PublishLearned(bool $emImmer = false): void
     {
         $w = $this->MedianOf('PowerSamples');
         if ($w !== null) {
             $this->SetValueIfChanged('DHWPowerLearned', (float) $w);
-            $this->PushUsageToEnergyManager((float) $w);
+            $this->PushUsageToEnergyManager((float) $w, $emImmer);
         }
         $this->SetValueIfChanged('PowerCorrLearned', round($this->PowerCorrection(), 2));
 
@@ -1081,7 +1087,7 @@ class SamsungWaermepumpe extends IPSModule
      * lädt – und die Zeile wird über ihren Namen gesucht, damit die Reihenfolge
      * der Verbraucher frei bleibt.
      */
-    private function PushUsageToEnergyManager(float $watt): void
+    private function PushUsageToEnergyManager(float $watt, bool $immer = false): void
     {
         $em   = $this->ReadPropertyInteger('EnergyManagerID');
         $name = trim($this->ReadPropertyString('EMConsumerName'));
@@ -1099,7 +1105,7 @@ class SamsungWaermepumpe extends IPSModule
                 continue;
             }
             $alt = (float) ($zeile['Usage'] ?? 0);
-            if ($alt <= 0 || abs($watt - $alt) / max($alt, 1.0) >= 0.10) {
+            if ($immer || $alt <= 0 || abs($watt - $alt) / max($alt, 1.0) >= 0.10) {
                 $zeile['Usage'] = round($watt);
                 $geaendert = true;
             }
