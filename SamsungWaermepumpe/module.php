@@ -154,6 +154,11 @@ class SamsungWaermepumpe extends IPSModule
     // Wasser: 4,18 kJ/(kg·K) · 1 kg/l · 1000 / 60 s  →  W je (l/min · K)
     private const W_PER_LPM_K = 69.67;
 
+    // Unterhalb dieser Spreizung wird keine Wärmeleistung ausgewiesen – im
+    // Stillstand liegen Vor- und Rücklauffühler im selben Wasser und weichen
+    // trotzdem um ein bis zwei Zehntel voneinander ab.
+    private const SPREAD_MIN = 0.5;
+
     // ═══════════════════════════════════════════════════════════════
     //  LIFECYCLE
     // ═══════════════════════════════════════════════════════════════
@@ -662,9 +667,19 @@ class SamsungWaermepumpe extends IPSModule
         $spread = ($flow > 0 && $ret > 0) ? round($flow - $ret, 1) : 0.0;
         $this->SetValueIfChanged('Spread', $spread);
 
-        // Beim Abtauen und im Kühlbetrieb ist die Spreizung negativ – dann keine
-        // Wärmeleistung ausweisen, das würde den COP verfälschen.
-        $heat = ($lpm > 0 && $spread > 0) ? round($lpm * $spread * self::W_PER_LPM_K) : 0.0;
+        // „In Betrieb" kommt aus der Kompressorfrequenz. Der Betriebszustand des
+        // Außengeräts wäre der richtige Datenpunkt, ist über Modbus aber nicht
+        // verfügbar – siehe Kommentar an STAT_SUB.
+        $hz = (int) $this->GetValueSafe('CompFreq', 0);
+        $laeuft = $hz > 0;
+
+        // Wärmeleistung nur ausweisen, wenn der Verdichter läuft UND die Spreizung
+        // über dem Fühlerrauschen liegt. Im Stillstand stehen beide Fühler auf
+        // demselben Wasser: 0,2 K Differenz bei 31 l/min ergäben sonst 435 W aus
+        // dem Nichts. Beim Abtauen ist die Spreizung negativ, das zählt auch nicht.
+        $heat = ($laeuft && $lpm > 0 && $spread >= self::SPREAD_MIN)
+            ? round($lpm * $spread * self::W_PER_LPM_K)
+            : 0.0;
         $this->SetValueIfChanged('HeatPower', (float) $heat);
 
         $elec = $amp > 0 ? round($amp * $mains + $standby) : 0.0;
@@ -672,11 +687,6 @@ class SamsungWaermepumpe extends IPSModule
 
         $this->SetValueIfChanged('COP', ($elec > 100 && $heat > 0) ? round($heat / $elec, 2) : 0.0);
 
-        // „In Betrieb" kommt aus der Kompressorfrequenz. Der Betriebszustand des
-        // Außengeräts wäre der richtige Datenpunkt, ist über Modbus aber nicht
-        // verfügbar – siehe Kommentar an STAT_SUB.
-        $hz = (int) $this->GetValueSafe('CompFreq', 0);
-        $laeuft = $hz > 0;
         $this->SetValueIfChanged('Running', $laeuft);
 
         // Wofür sie läuft, verrät das 3-Wegeventil. Wichtig, weil der COP
