@@ -135,7 +135,10 @@ class SamsungWaermepumpe extends IPSModule
     private const NO_VALUE    = 65535;   // 0xFFFF
     private const LOCK_LOCKED = 25443;   // 0x6363 auf der Fernbedienungssperre
 
-    // Betriebszustand Außengerät
+    // Betriebsart-Erkennung (Variable "Läuft für")
+    private const OP_STANDBY = 0;
+    private const OP_HEAT    = 1;
+    private const OP_DHW     = 2;
 
     // Wochenplan-Aktions-IDs
     private const HEAT_COMFORT = 1;
@@ -679,7 +682,9 @@ class SamsungWaermepumpe extends IPSModule
         // Wofür sie läuft, verrät das 3-Wegeventil. Wichtig, weil der COP
         // zwischen Heizen und Warmwasser deutlich auseinanderliegt.
         $ventil = (int) $this->GetValueSafe('ThreeWayValve', 0);
-        $this->SetValueIfChanged('Operation', $laeuft ? ($ventil === 1 ? 2 : 1) : 0);
+        $this->SetValueIfChanged('Operation', $laeuft
+            ? ($ventil === 1 ? self::OP_DHW : self::OP_HEAT)
+            : self::OP_STANDBY);
     }
 
     /** Fehlertext aus den drei Fehlercodes und dem Modul-Fehlerstatus. */
