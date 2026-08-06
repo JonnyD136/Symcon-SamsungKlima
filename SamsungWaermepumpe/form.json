@@ -218,6 +218,25 @@
         },
         {
             "type": "ExpansionPanel",
+            "caption": "Jahresarbeitszahl (optional)",
+            "items": [
+                {
+                    "type": "CheckBox",
+                    "name": "EnergyStats",
+                    "caption": "Wärme- und Stromarbeit mitschreiben und daraus die JAZ bilden"
+                },
+                {
+                    "type": "Label",
+                    "caption": "Gleitend über 365 Tage, getrennt nach Warmwasser und Heizung – die Arbeitszahlen liegen weit auseinander (Warmwasser fährt auf 55 °C, Heizung auf gut 30 °C Vorlauf)."
+                },
+                {
+                    "type": "Label",
+                    "caption": "Achtung: Beide Seiten sind Rechenwerte. Die Wärmeleistung kommt aus Durchfluss × Spreizung (kein Wärmemengenzähler), die elektrische Leistung aus dem Kompressorstrom × gelerntem Korrekturfaktor. Die JAZ ist damit ein belastbarer Trend, keine abrechnungsfähige Zahl – dafür bräuchte es einen Wärmemengenzähler und einen Zähler auf der Einspeisung der Wärmepumpe."
+                }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
             "caption": "Lernen: Ladeleistung und Bedarfszeiten (optional)",
             "items": [
                 {
@@ -292,6 +311,11 @@
             "type": "Button",
             "caption": "Gelerntes anzeigen",
             "onClick": "SAMW_DumpLearning($id);"
+        },
+        {
+            "type": "Button",
+            "caption": "Jahresbilanz zurücksetzen",
+            "onClick": "SAMW_ResetEnergy($id);"
         },
         {
             "type": "Button",

@@ -140,6 +140,9 @@ class SamsungWaermepumpe extends IPSModule
     private const OP_HEAT    = 1;
     private const OP_DHW     = 2;
 
+    // 3-Wegeventil: 0 = Heizkreis, 1 = Speicher
+    private const VALVE_DHW  = 1;
+
     // Wochenplan-Aktions-IDs
     private const HEAT_COMFORT = 1;
     private const HEAT_ECO     = 2;
@@ -162,10 +165,9 @@ class SamsungWaermepumpe extends IPSModule
     // Takt der PV-Warmwasserprüfung (s) und Abstand zum Sollwert, ab dem eine
     // erzwungene Ladung als erledigt gilt (der letzte Zehntelgrad braucht lange).
     private const DHW_CHECK      = 60;
-    // Wie lange auf die Bestätigung der Anlage gewartet wird und wie oft ein
-    // unbestätigter Befehl überhaupt wiederholt wird.
+    // Karenzzeit nach einem eigenen Befehl: So lange wird die (unzuverlässige)
+    // Rückmeldung ignoriert und der Anlage Zeit zum Anlaufen gelassen.
     private const DHW_SETTLE     = 300;
-    private const DHW_MAX_TRIES  = 3;
     private const DHW_DONE_DELTA = 1.0;
 
     // ── Lernen ──
@@ -175,6 +177,7 @@ class SamsungWaermepumpe extends IPSModule
     private const DRAW_SIGNIFICANT = 3.0;    // K je Stunde, ab wann ein Korb als Bedarf zählt
     private const PROFILE_ALPHA    = 0.30;   // Gewicht eines neuen Tages im Wochenprofil
     private const PV_HOUR          = 10;     // ab dieser Stunde kann die PV wieder laden
+    private const COP_DAYS        = 365;   // gleitendes Fenster der Jahresarbeitszahl
     private const SAMPLES_MAX      = 10;     // Ladungen im Gedächtnis (Median daraus)
     private const LOAD_RING        = 15;     // Hauslast-Messpunkte für die Grundlast
     private const CHARGE_MIN_N     = 5;      // Mindest-Messpunkte für eine gültige Ladung
@@ -229,6 +232,7 @@ class SamsungWaermepumpe extends IPSModule
 
         // Lernen: Ladeleistung aus dem Hauslast-Sprung, Bedarfszeiten aus dem
         // Temperaturverlauf des Speichers.
+        $this->RegisterPropertyBoolean('EnergyStats', false);
         $this->RegisterPropertyBoolean('DHWLearn', false);
         $this->RegisterPropertyInteger('HouseLoadVarID', 0);
         $this->RegisterPropertyInteger('DHWLeadTime', 60);
@@ -257,6 +261,9 @@ class SamsungWaermepumpe extends IPSModule
         $this->RegisterAttributeInteger('DHWWish', -1);       // zuletzt gesendeter Schaltbefehl
         $this->RegisterAttributeInteger('DHWWishSince', 0);
         $this->RegisterAttributeInteger('DHWTries', 0);
+        $this->RegisterAttributeInteger('DHWPendingUntil', 0);
+        $this->RegisterAttributeString('EnergyDays', '{}');   // Tagesbilanzen fuer die JAZ
+        $this->RegisterAttributeInteger('EnergyLast', 0);
 
         $this->RegisterTimer('PollTimer', 0, 'SAMW_PollStatus($_IPS["TARGET"]);');
         $this->RegisterTimer('DHWTimer', 0,
@@ -271,7 +278,8 @@ class SamsungWaermepumpe extends IPSModule
         $this->RegisterVariables();
         $this->RegisterMessage(0, IPS_KERNELMESSAGE);
 
-        $laeuft = $this->ReadPropertyBoolean('DHWPVEnabled') || $this->ReadPropertyBoolean('DHWLearn');
+        $laeuft = $this->ReadPropertyBoolean('DHWPVEnabled') || $this->ReadPropertyBoolean('DHWLearn')
+            || $this->ReadPropertyBoolean('EnergyStats');
         $this->SetTimerInterval('DHWTimer', $laeuft ? self::DHW_CHECK * 1000 : 0);
 
         if (IPS_GetKernelRunlevel() == KR_READY) {
@@ -446,6 +454,10 @@ class SamsungWaermepumpe extends IPSModule
             case 'DHWPower':
                 $this->WriteKNX('DHWPower', (bool) $Value);
                 $this->SetValueIfChanged('DHWPower', (bool) $Value);
+                // Die Rückmeldung 5/2/19 antwortet auf keine Leseanforderung und
+                // meldete am 06.08. AUS, während die Anlage nachweislich Warmwasser
+                // machte. Sie darf den eigenen Befehl darum nicht überschreiben.
+                $this->WriteAttributeInteger('DHWPendingUntil', time() + self::DHW_SETTLE);
                 break;
             case 'DHWPVRelease':
                 // Nur merken – die Entscheidung fällt in UpdateDHWDemand(), weil
@@ -579,45 +591,47 @@ class SamsungWaermepumpe extends IPSModule
      * schreiben. Genau das ist am 06.08. passiert – über 700 Telegramme an
      * einem Tag, ohne dass je Warmwasser gemacht wurde.
      *
-     * Bestätigt die Anlage nicht, wird der Befehl höchstens DHW_MAX_TRIES mal
-     * im Abstand von DHW_SETTLE wiederholt und danach als Störung gemeldet.
-     * Eine Anlage, die dreimal nicht reagiert, reagiert auch beim vierten Mal
-     * nicht – das ist ein Fall für den Menschen, nicht für mehr Telegramme.
+     * Nachgesendet wird gar nicht: Es gibt nichts zu bestätigen, weil 5/2/19
+     * auf keine Leseanforderung antwortet. Läuft die Anlage trotz Anforderung
+     * nicht an, ist das ein Fall für den Menschen, nicht für mehr Telegramme.
      */
     private function DriveDHWPower(bool $want, string $text, float $ist): void
     {
         $wunsch = $this->ReadAttributeInteger('DHWWish');       // -1 = noch keiner
         $seit   = $this->ReadAttributeInteger('DHWWishSince');
-        $tries  = $this->ReadAttributeInteger('DHWTries');
         $neu    = $want ? 1 : 0;
 
         if ($wunsch !== $neu) {
             $this->WriteAttributeInteger('DHWWish', $neu);
             $this->WriteAttributeInteger('DHWWishSince', time());
-            $this->WriteAttributeInteger('DHWTries', 1);
             $this->RequestAction('DHWPower', $want);
             $this->LogMessage('Warmwasser ' . ($want ? 'EIN' : 'AUS') . ' – ' . $text
                 . sprintf(' (Ist %.1f °C)', $ist), KL_MESSAGE);
             return;
         }
 
-        if ((bool) $this->GetValueSafe('DHWPower', false) === $want) {
-            $this->WriteAttributeInteger('DHWTries', 0);        // bestätigt
-            return;
+        // Kein Nachsenden. Die Rückmeldung 5/2/19 ist tot, es gibt also nichts zu
+        // bestätigen – und ein Vergleich gegen sie war genau die Schleife vom 06.08.
+        // Bleibt die Anlage trotz Anforderung kalt, wird das gemeldet, nicht gesendet.
+        if ($want && !$this->DHWRunning() && (time() - $seit) > self::DHW_SETTLE
+            && $ist < (float) $this->GetValueSafe('DHWSetpoint', 50.0) - 2.0) {
+            $this->SetValueIfChanged('DHWDemandReason',
+                $text . sprintf(' – angefordert seit %d min, Anlage lädt nicht',
+                    (int) ((time() - $seit) / 60)));
         }
-        if ($tries <= 0 || $tries >= self::DHW_MAX_TRIES || (time() - $seit) < self::DHW_SETTLE) {
-            if ($tries >= self::DHW_MAX_TRIES) {
-                $this->SetValueIfChanged('DHWDemandReason',
-                    $text . ' – Anlage bestätigt nicht, Ansteuerung angehalten');
-            }
-            return;
-        }
-        $this->WriteAttributeInteger('DHWTries', $tries + 1);
-        $this->WriteAttributeInteger('DHWWishSince', time());
-        $this->RequestAction('DHWPower', $want);
-        $this->LogMessage(sprintf('Warmwasser %s erneut gesendet (Versuch %d von %d) – '
-            . 'die Anlage meldet weiterhin %s', $want ? 'EIN' : 'AUS', $tries + 1,
-            self::DHW_MAX_TRIES, $want ? 'AUS' : 'EIN'), KL_WARNING);
+    }
+
+    /**
+     * Läuft die Anlage gerade für Warmwasser? Nicht an der Freigabe-Rückmeldung
+     * ablesen (5/2/19 antwortet auf keine Leseanforderung und stand am 06.08.
+     * auf AUS, während geladen wurde), sondern am tatsächlichen Betrieb:
+     * Verdichter läuft UND 3-Wegeventil steht auf Speicher. Beide Objekte
+     * antworten zuverlässig.
+     */
+    private function DHWRunning(): bool
+    {
+        return (int) $this->GetValueSafe('CompFreq', 0) > 0
+            && (int) $this->GetValueSafe('ThreeWayValve', 0) === self::VALVE_DHW;
     }
 
     /** Liegt die aktuelle Uhrzeit im Nachheiz-Fenster [Deadline, Ende)? */
@@ -686,6 +700,10 @@ class SamsungWaermepumpe extends IPSModule
      */
     public function LearnStep()
     {
+        if ($this->ReadPropertyBoolean('EnergyStats')) {
+            $this->IntegrateEnergy();
+            $this->PublishEnergy();
+        }
         if (!$this->ReadPropertyBoolean('DHWLearn')) {
             return;
         }
@@ -855,6 +873,99 @@ class SamsungWaermepumpe extends IPSModule
         printf("Wirksame Deadline  : %02d:%02d bei unter %.1f °C\n", (int) ($dl / 60), $dl % 60, $temp);
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    //  JAHRESARBEITSZAHL
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * Wärme- und Stromarbeit tagesweise aufsummieren. Gerechnet wird über die
+     * tatsächlich vergangene Zeit, nicht über den Timer-Takt – ein Neustart
+     * oder eine Verzögerung darf die Bilanz nicht verfälschen. Längere Lücken
+     * werden verworfen, weil über sie nichts bekannt ist.
+     *
+     * Getrennt nach Warmwasser und Heizung: Die Arbeitszahlen liegen weit
+     * auseinander (Warmwasser fährt auf 55 °C, Heizung auf 31 °C Vorlauf),
+     * eine gemeinsame Zahl verdeckt das.
+     */
+    private function IntegrateEnergy(): void
+    {
+        $jetzt = time();
+        $vor   = $this->ReadAttributeInteger('EnergyLast');
+        $this->WriteAttributeInteger('EnergyLast', $jetzt);
+        if ($vor <= 0) {
+            return;                                    // erster Aufruf
+        }
+        $dt = $jetzt - $vor;
+        if ($dt <= 0 || $dt > self::DHW_CHECK * 3) {
+            return;                                    // Lücke – nicht schätzen
+        }
+
+        $waerme = (float) $this->GetValueSafe('HeatPower', 0.0);
+        $strom  = (float) $this->GetValueSafe('PowerElec', 0.0);
+        if ($waerme <= 0 && $strom <= 0) {
+            return;
+        }
+        $whW = $waerme * $dt / 3600;
+        $whS = $strom  * $dt / 3600;
+        $dhw = $this->DHWRunning();
+
+        $tage = json_decode($this->ReadAttributeString('EnergyDays'), true) ?: [];
+        $heute = date('Y-m-d');
+        $t = $tage[$heute] ?? [0.0, 0.0, 0.0, 0.0];    // [Wärme, Strom, davon WW-Wärme, davon WW-Strom]
+        $t[0] += $whW;
+        $t[1] += $whS;
+        if ($dhw) {
+            $t[2] += $whW;
+            $t[3] += $whS;
+        }
+        $tage[$heute] = [round($t[0], 1), round($t[1], 1), round($t[2], 1), round($t[3], 1)];
+
+        if (count($tage) > self::COP_DAYS) {           // gleitendes Fenster
+            ksort($tage);
+            $tage = array_slice($tage, -self::COP_DAYS, null, true);
+        }
+        $this->WriteAttributeString('EnergyDays', json_encode($tage));
+    }
+
+    /** Summen und Arbeitszahlen aus den Tagesbilanzen in die Variablen schreiben. */
+    private function PublishEnergy(): void
+    {
+        $tage = json_decode($this->ReadAttributeString('EnergyDays'), true) ?: [];
+        if (!$tage) {
+            return;
+        }
+        $w = $s = $wD = $sD = 0.0;
+        foreach ($tage as $t) {
+            $w += $t[0]; $s += $t[1]; $wD += $t[2]; $sD += $t[3];
+        }
+        $jaz = fn (float $waerme, float $strom): float =>
+            $strom > 1000 ? round($waerme / $strom, 2) : 0.0;   // erst ab 1 kWh belastbar
+
+        $this->SetValueIfChanged('EnergyHeatYear', round($w / 1000, 1));
+        $this->SetValueIfChanged('EnergyElecYear', round($s / 1000, 1));
+        $this->SetValueIfChanged('COPYear',     $jaz($w, $s));
+        $this->SetValueIfChanged('COPYearDHW',  $jaz($wD, $sD));
+        $this->SetValueIfChanged('COPYearHeat', $jaz($w - $wD, $s - $sD));
+
+        ksort($tage);
+        $this->SetValueIfChanged('COPYearBasis', sprintf(
+            '%d Tage seit %s · Warmwasser %.1f von %.1f kWh Strom (%.0f %%)',
+            count($tage), date('d.m.Y', strtotime(array_key_first($tage))),
+            $sD / 1000, $s / 1000, $s > 0 ? $sD / $s * 100 : 0));
+    }
+
+    /** Jahresbilanz verwerfen (z. B. nach einem Eingriff an der Anlage). */
+    public function ResetEnergy()
+    {
+        $this->WriteAttributeString('EnergyDays', '{}');
+        $this->WriteAttributeInteger('EnergyLast', 0);
+        foreach (['EnergyHeatYear', 'EnergyElecYear', 'COPYear', 'COPYearDHW', 'COPYearHeat'] as $i) {
+            $this->SetValueIfChanged($i, 0.0);
+        }
+        $this->SetValueIfChanged('COPYearBasis', 'noch keine Daten');
+        $this->LogMessage('Jahresbilanz verworfen', KL_MESSAGE);
+    }
+
     /** Alles Gelernte verwerfen und von vorn anfangen. */
     public function ResetLearning()
     {
@@ -926,7 +1037,7 @@ class SamsungWaermepumpe extends IPSModule
     private function TrackCharge(float $ist): void
     {
         $c = json_decode($this->ReadAttributeString('Charge'), true) ?: [];
-        $an = (bool) $this->GetValueSafe('DHWPower', false);
+        $an = $this->DHWRunning();
         $vid = $this->ReadPropertyInteger('HouseLoadVarID');
         $last = ($vid > 0 && IPS_VariableExists($vid)) ? (float) GetValue($vid) : null;
 
@@ -1349,7 +1460,11 @@ class SamsungWaermepumpe extends IPSModule
             // ── Steuerobjekte (Rückmeldung) ──
             case 'Power':        $this->SetValueIfChanged('Power', $this->toBool($value)); break;
             case 'Mode':         $this->SetValueIfChanged('Mode', (int) $value); break;
-            case 'DHWPower':     $this->SetValueIfChanged('DHWPower', $this->toBool($value)); break;
+            case 'DHWPower':
+                if (time() >= $this->ReadAttributeInteger('DHWPendingUntil')) {
+                    $this->SetValueIfChanged('DHWPower', $this->toBool($value));
+                }
+                break;
             case 'DHWMode':      $this->SetValueIfChanged('DHWMode', (int) $value); break;
             case 'Silent':       $this->SetValueIfChanged('Silent', $this->toBool($value)); break;
             case 'Away':         $this->SetValueIfChanged('Away', $this->toBool($value)); break;
@@ -1496,7 +1611,7 @@ class SamsungWaermepumpe extends IPSModule
         // Wofür sie läuft, verrät das 3-Wegeventil. Wichtig, weil der COP
         // zwischen Heizen und Warmwasser deutlich auseinanderliegt.
         $ventil = (int) $this->GetValueSafe('ThreeWayValve', 0);
-        $dhw = $laeuft && $ventil === 1;
+        $dhw = $laeuft && $ventil === self::VALVE_DHW;
         $this->SetValueIfChanged('Operation', $laeuft
             ? ($dhw ? self::OP_DHW : self::OP_HEAT)
             : self::OP_STANDBY);
@@ -1574,6 +1689,18 @@ class SamsungWaermepumpe extends IPSModule
         $pv = $this->ReadPropertyBoolean('DHWPVEnabled');
         IPS_SetHidden($this->GetIDForIdent('DHWPVRelease'), !$pv);
         IPS_SetHidden($this->GetIDForIdent('DHWDemandReason'), !$pv);
+
+        // ── Jahresarbeitszahl ──
+        $this->RegisterVariableFloat('EnergyHeatYear', 'Wärmearbeit (365 Tage)', '~Electricity', $p += 10);
+        $this->RegisterVariableFloat('EnergyElecYear', 'Stromarbeit (365 Tage)', '~Electricity', $p += 10);
+        $this->RegisterVariableFloat('COPYear', 'Jahresarbeitszahl', 'SAMW.COP', $p += 10);
+        $this->RegisterVariableFloat('COPYearDHW', 'JAZ Warmwasser', 'SAMW.COP', $p += 10);
+        $this->RegisterVariableFloat('COPYearHeat', 'JAZ Heizung', 'SAMW.COP', $p += 10);
+        $this->RegisterVariableString('COPYearBasis', 'JAZ Datenbasis', '', $p += 10);
+        $jaz = $this->ReadPropertyBoolean('EnergyStats');
+        foreach (['EnergyHeatYear', 'EnergyElecYear', 'COPYear', 'COPYearDHW', 'COPYearHeat', 'COPYearBasis'] as $i) {
+            IPS_SetHidden($this->GetIDForIdent($i), !$jaz);
+        }
 
         // ── Gelerntes ──
         $this->RegisterVariableFloat('DHWPowerNow', 'Warmwasser-Leistung (aktuell)', '~Watt', $p += 10);
