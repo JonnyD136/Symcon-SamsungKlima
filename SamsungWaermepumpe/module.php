@@ -1620,6 +1620,14 @@ class SamsungWaermepumpe extends IPSModule
         // als „aktuelle Nutzung" des Verbrauchers Warmwasser bekäme, würde im
         // Winter die Heizung mitzählen und den Verbraucher grundlos abwerfen.
         $this->SetValueIfChanged('DHWPowerNow', $dhw ? (float) $elec : 0.0);
+
+        // Läuft die Anlage für Warmwasser, dann IST die Freigabe an – ohne sie
+        // ginge es nicht. Das ist die verlässlichere Quelle als die Rückmeldung
+        // 5/2/19, die auf keine Leseanforderung antwortet und die Anzeige sonst
+        // dauerhaft auf AUS stehen lässt, während geladen wird.
+        if ($dhw) {
+            $this->SetValueIfChanged('DHWPower', true);
+        }
     }
 
     /** Fehlertext aus den drei Fehlercodes und dem Modul-Fehlerstatus. */
