@@ -34,8 +34,8 @@ Sub = Subadresse in 5/2/x. „B" = Befehl (schreibbar), „S" = Status.
 | 2 | S | Abtaubetrieb | 51 · 2 | 7.001 | Defrost |
 | 3 | S | Kommunikationsstatus | 52 · 50 | 5.005 | Comm |
 | 4 | S | Gerätetyp | 53 · 51 | 7 | DeviceType |
-| 5 | B | Ein / Aus | 54 · 52 | 1.001 | Power |
-| 6 | S | Ein / Aus | 54 · 52 | 1.001 | Power |
+| 5 | B | Ein / Aus | 54 · 52 | **5.005** | Power |
+| 6 | S | Ein / Aus | 54 · 52 | **5.005** | Power |
 | 7 | B | Betriebsart | 55 · 53 | 5.005 | Mode |
 | 8 | S | Betriebsart | 55 · 53 | 5.005 | Mode |
 | 9 | B | Raum-Soll | 56 · 58 | 9.001 | RoomSetpoint |
@@ -47,8 +47,8 @@ Sub = Subadresse in 5/2/x. „B" = Befehl (schreibbar), „S" = Status.
 | 15 | S | MCC Vorlauf-Ist | 61 · 67 | 9.001 | MCCFlowTemp |
 | 16 | B | Vorlauf-Soll | 62 · 68 | 9.001 | FlowSetpoint |
 | 17 | S | Vorlauf-Soll | 62 · 68 | 9.001 | FlowSetpoint |
-| 18 | B | Warmwasser Ein / Aus | 63 · 72 | 1.001 | DHWPower |
-| 19 | S | Warmwasser Ein / Aus | 63 · 72 | 1.001 | DHWPower |
+| 18 | B | Warmwasser Ein / Aus | 63 · 72 | **5.005** | DHWPower |
+| 19 | S | Warmwasser Ein / Aus | 63 · 72 | **5.005** | DHWPower |
 | 20 | B | Warmwasser-Modus | 64 · 73 | 5.005 | DHWMode |
 | 21 | S | Warmwasser-Modus | 64 · 73 | 5.005 | DHWMode |
 | 22 | B | Warmwasser-Soll | 65 · 74 | 9.001 | DHWSetpoint |
@@ -76,6 +76,15 @@ Sub = Subadresse in 5/2/x. „B" = Befehl (schreibbar), „S" = Status.
 | 51 | S | Niederdruck | 88 · 9 | 9.001 | LowPressure |
 | 52 | S | Betriebszustand Außengerät | 89 · 10 | 7 | OutdoorState |
 | 53 | S | 4-Wege-Ventil | 90 · 11 | 5.005 | FourWayValve |
+
+**Ein/Aus ist 1 Byte, nicht 1 Bit** (Subs 5/6/18/19). Die Kanalliste des
+Herstellers sagt 1.001, die Anlage sendet und erwartet aber 5.005 – exakt wie
+auf der Klimaseite desselben MDT-Gateways. Am 06.08.2026 live nachgewiesen: Eine
+zusätzliche DPT-5-Instanz auf 5/2/19 antwortete sofort mit `1`, während die
+DPT-1-Instanz die Nutzlast verwarf und stundenlang `false` zeigte, obwohl die
+Anlage nachweislich Warmwasser machte. **Das ist heimtückisch**, weil im
+ETS-Gruppenmonitor die richtige `1` steht – der Fehler entsteht erst in Symcon.
+Silent und Away (27–30) sind dagegen echtes 1 Bit und funktionieren.
 
 ## Wertebedeutungen
 

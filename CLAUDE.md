@@ -105,6 +105,25 @@ zu sehen war. `SetBoolIfPlausible()` nimmt für `BoosterDHW`/`BackupHeater` nur
 noch exakt 0 oder 1 an; `Defrost` und `RemoteLock` hatten schon eigene Filter.
 **Regel: kein neuer Bool-Datenpunkt aus einem Modbus-Register ohne Filter.**
 
+## Ein/Aus ist 1 Byte (06.08.2026)
+Bei der **Wärmepumpe** senden und erwarten die Ein/Aus-Objekte (Subs 5/6/18/19)
+**DPT 5.005**, obwohl die Herstellerliste 1.001 sagt – dieselbe Falle wie auf
+der Klimaseite. Eine „KNX DPT 1"-Instanz verwirft die 1-Byte-Nutzlast **still**:
+kein Fehler, kein Log, die Variable behält ihren alten Wert.
+
+Das kostete einen ganzen Tag Fehlersuche: `Wärmepumpe Ein/Aus` zeigte AUS,
+während die Anlage lief, und darauf aufbauend war jede weitere Schlussfolgerung
+falsch. **Im ETS-Gruppenmonitor stand die richtige 1** – der Fehler entsteht
+erst in Symcon, ein Bus-Mitschnitt entlastet also nicht.
+
+Erkennungsprobe: zweite, rein lesende DPT-5-Instanz auf dieselbe GA legen und
+`KNX_RequestStatus` schicken. Antwortet die eine und die andere nicht, ist der
+Typ falsch. Umgekehrt gegenprüfen (Silent/Away 27–30 sind echtes 1 Bit und
+antworten nur der DPT-1-Instanz).
+
+**Regel: Statusobjekte, die auf keine Leseanforderung antworten, sind
+verdächtig – erst den Datenpunkttyp prüfen, bevor man dem Wert glaubt.**
+
 ## FACE-Konventionen (eingehalten)
 - Klassenname = module.json-„name" ohne Leerzeichen → `SamsungKlima`
 - Timer-Callback in Prefix-Form: `SAMK_Regulate($_IPS["TARGET"])`
