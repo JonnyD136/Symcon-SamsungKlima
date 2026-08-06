@@ -162,6 +162,10 @@ class SamsungWaermepumpe extends IPSModule
     // Takt der PV-Warmwasserprüfung (s) und Abstand zum Sollwert, ab dem eine
     // erzwungene Ladung als erledigt gilt (der letzte Zehntelgrad braucht lange).
     private const DHW_CHECK      = 60;
+    // Wie lange auf die Bestätigung der Anlage gewartet wird und wie oft ein
+    // unbestätigter Befehl überhaupt wiederholt wird.
+    private const DHW_SETTLE     = 300;
+    private const DHW_MAX_TRIES  = 3;
     private const DHW_DONE_DELTA = 1.0;
 
     // ── Lernen ──
@@ -250,6 +254,9 @@ class SamsungWaermepumpe extends IPSModule
         $this->RegisterAttributeFloat('LastTemp', 0.0);
         $this->RegisterAttributeInteger('LastTempTs', 0);
         $this->RegisterAttributeFloat('LastPushed', 0.0);
+        $this->RegisterAttributeInteger('DHWWish', -1);       // zuletzt gesendeter Schaltbefehl
+        $this->RegisterAttributeInteger('DHWWishSince', 0);
+        $this->RegisterAttributeInteger('DHWTries', 0);
 
         $this->RegisterTimer('PollTimer', 0, 'SAMW_PollStatus($_IPS["TARGET"]);');
         $this->RegisterTimer('DHWTimer', 0,
@@ -560,13 +567,57 @@ class SamsungWaermepumpe extends IPSModule
         }
         $this->SetValueIfChanged('DHWDemandReason', $text);
 
-        // Nur bei echter Abweichung schreiben: jeder Write ist ein KNX-Telegramm,
-        // und die Rückmeldung des MDT kommt ohnehin über MirrorStatus zurück.
-        if ((bool) $this->GetValueSafe('DHWPower', false) !== $want) {
+        $this->DriveDHWPower($want, $text, $ist);
+    }
+
+    /**
+     * Schaltbefehl absetzen und die Bestätigung überwachen.
+     *
+     * Der eigene Wunsch wird im Attribut geführt, NICHT an der Statusvariable
+     * abgelesen: Die spiegelt die Rückmeldung der Anlage, und wenn die dem
+     * Befehl nicht folgt, würde ein Vergleich gegen sie im Sekundentakt neu
+     * schreiben. Genau das ist am 06.08. passiert – über 700 Telegramme an
+     * einem Tag, ohne dass je Warmwasser gemacht wurde.
+     *
+     * Bestätigt die Anlage nicht, wird der Befehl höchstens DHW_MAX_TRIES mal
+     * im Abstand von DHW_SETTLE wiederholt und danach als Störung gemeldet.
+     * Eine Anlage, die dreimal nicht reagiert, reagiert auch beim vierten Mal
+     * nicht – das ist ein Fall für den Menschen, nicht für mehr Telegramme.
+     */
+    private function DriveDHWPower(bool $want, string $text, float $ist): void
+    {
+        $wunsch = $this->ReadAttributeInteger('DHWWish');       // -1 = noch keiner
+        $seit   = $this->ReadAttributeInteger('DHWWishSince');
+        $tries  = $this->ReadAttributeInteger('DHWTries');
+        $neu    = $want ? 1 : 0;
+
+        if ($wunsch !== $neu) {
+            $this->WriteAttributeInteger('DHWWish', $neu);
+            $this->WriteAttributeInteger('DHWWishSince', time());
+            $this->WriteAttributeInteger('DHWTries', 1);
             $this->RequestAction('DHWPower', $want);
             $this->LogMessage('Warmwasser ' . ($want ? 'EIN' : 'AUS') . ' – ' . $text
                 . sprintf(' (Ist %.1f °C)', $ist), KL_MESSAGE);
+            return;
         }
+
+        if ((bool) $this->GetValueSafe('DHWPower', false) === $want) {
+            $this->WriteAttributeInteger('DHWTries', 0);        // bestätigt
+            return;
+        }
+        if ($tries <= 0 || $tries >= self::DHW_MAX_TRIES || (time() - $seit) < self::DHW_SETTLE) {
+            if ($tries >= self::DHW_MAX_TRIES) {
+                $this->SetValueIfChanged('DHWDemandReason',
+                    $text . ' – Anlage bestätigt nicht, Ansteuerung angehalten');
+            }
+            return;
+        }
+        $this->WriteAttributeInteger('DHWTries', $tries + 1);
+        $this->WriteAttributeInteger('DHWWishSince', time());
+        $this->RequestAction('DHWPower', $want);
+        $this->LogMessage(sprintf('Warmwasser %s erneut gesendet (Versuch %d von %d) – '
+            . 'die Anlage meldet weiterhin %s', $want ? 'EIN' : 'AUS', $tries + 1,
+            self::DHW_MAX_TRIES, $want ? 'AUS' : 'EIN'), KL_WARNING);
     }
 
     /** Liegt die aktuelle Uhrzeit im Nachheiz-Fenster [Deadline, Ende)? */
