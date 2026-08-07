@@ -174,6 +174,8 @@ class SamsungWaermepumpe extends IPSModule
     // Der Stillstandsverlust des Speichers liegt gemessen bei rund 0,25 K/h.
     // Alles ab 1,5 K/h ist mit Abstand darüber und damit eine echte Zapfung.
     private const DRAW_RATE        = 1.5;    // K/h
+    private const DRAW_MIN_DELTA   = 0.5;    // K – darunter ist es Fühlerrauschen
+    private const DRAW_WINDOW      = 600;    // s bis der Bezugspunkt ohne Abfall nachrückt
     private const DRAW_SIGNIFICANT = 3.0;    // K je Stunde, ab wann ein Korb als Bedarf zählt
     private const PROFILE_ALPHA    = 0.30;   // Gewicht eines neuen Tages im Wochenprofil
     private const PV_HOUR          = 10;     // ab dieser Stunde kann die PV wieder laden
@@ -534,6 +536,9 @@ class SamsungWaermepumpe extends IPSModule
     public function UpdateDHWDemand()
     {
         if (!$this->ReadPropertyBoolean('DHWPVEnabled')) {
+            // Sonst friert der letzte Grund ein und behauptet tagelang etwas,
+            // das längst nicht mehr gilt.
+            $this->SetValueIfChanged('DHWDemandReason', 'PV-Steuerung aus');
             return;
         }
 
@@ -1006,18 +1011,36 @@ class SamsungWaermepumpe extends IPSModule
     {
         $vorher = $this->ReadAttributeFloat('LastTemp');
         $ts     = $this->ReadAttributeInteger('LastTempTs');
+
+        if ($vorher <= 0 || $ts <= 0 || $ist > $vorher) {
+            // Erster Wert oder der Speicher steigt (Ladung) → Bezugspunkt neu setzen
+            $this->WriteAttributeFloat('LastTemp', $ist);
+            $this->WriteAttributeInteger('LastTempTs', time());
+            return;
+        }
+
+        // Nicht von Takt zu Takt rechnen. Der Fühler löst 0,1 K auf, und 0,1 K in
+        // 60 s ergeben rechnerisch 6 K/h – damit würde jeder Quantisierungsschritt
+        // als Zapfung gebucht. Am 06.08. hat das die Donnerstagszeile des Profils
+        // über den ganzen Tag mit Phantomwerten gefüllt. Der Bezugspunkt bleibt
+        // deshalb stehen, bis ein belastbarer Abfall oder genug Zeit vorliegt.
+        $delta = $vorher - $ist;
+        $dt    = time() - $ts;
+        if ($delta < self::DRAW_MIN_DELTA && $dt < self::DRAW_WINDOW) {
+            return;
+        }
         $this->WriteAttributeFloat('LastTemp', $ist);
         $this->WriteAttributeInteger('LastTempTs', time());
 
-        if ($vorher <= 0 || $ts <= 0) {
-            return;
-        }
-        $std = (time() - $ts) / 3600;
+        $std = $dt / 3600;
         if ($std <= 0 || $std > 1) {
             return;                                  // Lücke (Neustart) nicht werten
         }
-        $rate = ($vorher - $ist) / $std;             // K/h Abfall
-        if ($rate < self::DRAW_RATE || (bool) $this->GetValueSafe('DHWPower', false)) {
+        if ($delta < self::DRAW_MIN_DELTA) {
+            return;                                  // zu klein für eine Zapfung
+        }
+        $rate = $delta / $std;                       // K/h Abfall
+        if ($rate < self::DRAW_RATE || $this->DHWRunning()) {
             return;
         }
         $tag = json_decode($this->ReadAttributeString('DrawToday'), true) ?: [];

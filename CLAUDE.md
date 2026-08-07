@@ -92,6 +92,13 @@ Heizstab fehlen und stehen in keinem Register. Also gelernt statt geraten:
   Morgendusche deckt die Ladung vom Vortag; zöge sie mit, würde mittags bei
   jeder Wolke Netzstrom gezogen statt auf die Sonne zu warten. Und die
   Auslöseschwelle steigt, wenn bis zum nächsten PV-Fenster viel ansteht.
+- **Zapf-Erkennung nie von Takt zu Takt rechnen** (Build 34): Der Fühler löst
+  0,1 K auf, und 0,1 K in 60 s ergeben rechnerisch 6 K/h – jeder Quantisierungs-
+  schritt wäre eine Zapfung. Am 07.08. war die Donnerstagszeile des Profils
+  deshalb über den ganzen Tag mit Phantomwerten gefüllt. Der Bezugspunkt bleibt
+  jetzt stehen, bis `DRAW_MIN_DELTA` (0,5 K) gefallen sind oder `DRAW_WINDOW`
+  (600 s) vergangen ist. **Beim Anlernen aus dem Archiv fiel das nicht auf** –
+  dort liegen die Messpunkte weiter auseinander.
 - `LearnFromArchive()` rechnet die Historie mit denselben Regeln durch,
   `DumpLearning()` zeigt Profil, Messreihen und die abgeleitete Deadline.
 
