@@ -747,22 +747,33 @@ class SamsungWaermepumpe extends IPSModule
         $this->ResetLearning();
 
         // ── Zapfungen → Wochenprofil ──
+        // Exakt dieselbe Logik wie DetectDraw() im Live-Betrieb: Ein Bezugspunkt
+        // bleibt stehen, bis genug gefallen ist oder genug Zeit vergangen ist.
+        // Ein Vergleich benachbarter Messpunkte taugt hier nicht – seit die
+        // Speichertemperatur dicht archiviert wird, besteht eine 19-K-Zapfung
+        // aus 190 Schritten zu 0,1 K, von denen einzeln keiner zählt.
         $tage = [];                                  // 'Y-m-d' => [24] Kelvin
-        for ($i = 1; $i < count($t); $i++) {
-            $std = ($t[$i]['TimeStamp'] - $t[$i - 1]['TimeStamp']) / 3600;
-            if ($std <= 0 || $std > 1) {
+        $ref = null; $refTs = 0;
+        foreach ($t as $x) {
+            if ($ref === null || $x['Value'] > $ref) {
+                $ref = $x['Value']; $refTs = $x['TimeStamp'];
                 continue;
             }
-            $ab = $t[$i - 1]['Value'] - $t[$i]['Value'];
-            // Gleiche Rauschsperre wie im Live-Betrieb: Seit die Speicher-
-            // temperatur dicht archiviert wird, stehen auch hier 0,1-K-Schritte
-            // im Abstand von Sekunden – die ergeben rechnerisch zweistellige K/h.
-            if ($ab < self::DRAW_MIN_DELTA || $ab / $std < self::DRAW_RATE) {
+            $delta = $ref - $x['Value'];
+            $dt    = $x['TimeStamp'] - $refTs;
+            if ($delta < self::DRAW_MIN_DELTA && $dt < self::DRAW_WINDOW) {
+                continue;                            // Bezugspunkt stehen lassen
+            }
+            $ref = $x['Value']; $refTs = $x['TimeStamp'];
+
+            $std = $dt / 3600;
+            if ($std <= 0 || $std > 1 || $delta < self::DRAW_MIN_DELTA
+                || $delta / $std < self::DRAW_RATE) {
                 continue;
             }
-            $tag = date('Y-m-d', $t[$i]['TimeStamp']);
+            $tag = date('Y-m-d', $x['TimeStamp']);
             $tage[$tag] = $tage[$tag] ?? array_fill(0, 24, 0.0);
-            $tage[$tag][(int) date('G', $t[$i]['TimeStamp'])] += round($ab, 2);
+            $tage[$tag][(int) date('G', $x['TimeStamp'])] += round($delta, 2);
         }
         $prof = array_fill(0, 7, array_fill(0, 24, 0.0));
         $zaehler = array_fill(0, 7, 0);
