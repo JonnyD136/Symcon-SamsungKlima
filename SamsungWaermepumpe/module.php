@@ -754,7 +754,10 @@ class SamsungWaermepumpe extends IPSModule
                 continue;
             }
             $ab = $t[$i - 1]['Value'] - $t[$i]['Value'];
-            if ($ab / $std < self::DRAW_RATE) {
+            // Gleiche Rauschsperre wie im Live-Betrieb: Seit die Speicher-
+            // temperatur dicht archiviert wird, stehen auch hier 0,1-K-Schritte
+            // im Abstand von Sekunden – die ergeben rechnerisch zweistellige K/h.
+            if ($ab < self::DRAW_MIN_DELTA || $ab / $std < self::DRAW_RATE) {
                 continue;
             }
             $tag = date('Y-m-d', $t[$i]['TimeStamp']);
