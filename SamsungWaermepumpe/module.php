@@ -168,6 +168,9 @@ class SamsungWaermepumpe extends IPSModule
     // Karenzzeit nach einem eigenen Befehl: So lange wird die (unzuverlässige)
     // Rückmeldung ignoriert und der Anlage Zeit zum Anlaufen gelassen.
     private const DHW_SETTLE     = 300;
+    // Pause zwischen „Anlage ein" und „Warmwasser ein" – der Kältekreis
+    // braucht den Moment, sonst verwirft die Anlage die zweite Anweisung.
+    private const POWER_GAP      = 250;
     private const DHW_DONE_DELTA = 1.0;
 
     // ── Lernen ──
@@ -227,6 +230,7 @@ class SamsungWaermepumpe extends IPSModule
         // dazu, die den Manager überstimmen (er kann sie nicht ausschalten,
         // weil er nur seine eigene Freigabe kennt).
         $this->RegisterPropertyBoolean('DHWPVEnabled', false);
+        $this->RegisterPropertyBoolean('DHWSwitchPower', false);
         $this->RegisterPropertyFloat('DHWCriticalTemp', 45.0);
         $this->RegisterPropertyString('DHWDeadline', '18:00');
         $this->RegisterPropertyFloat('DHWDeadlineTemp', 50.0);
@@ -264,6 +268,7 @@ class SamsungWaermepumpe extends IPSModule
         $this->RegisterAttributeInteger('DHWWishSince', 0);
         $this->RegisterAttributeInteger('DHWTries', 0);
         $this->RegisterAttributeInteger('DHWPendingUntil', 0);
+        $this->RegisterAttributeInteger('PowerByUs', 0);      // hat das Modul die WP eingeschaltet?
         $this->RegisterAttributeString('EnergyDays', '{}');   // Tagesbilanzen fuer die JAZ
         $this->RegisterAttributeInteger('EnergyLast', 0);
 
@@ -609,7 +614,14 @@ class SamsungWaermepumpe extends IPSModule
         if ($wunsch !== $neu) {
             $this->WriteAttributeInteger('DHWWish', $neu);
             $this->WriteAttributeInteger('DHWWishSince', time());
-            $this->RequestAction('DHWPower', $want);
+            // Erst die Anlage, dann die Freigabe – umgekehrt läuft der Befehl ins Leere.
+            if ($want) {
+                $this->EnsurePowerForDHW(true);
+                $this->RequestAction('DHWPower', true);
+            } else {
+                $this->RequestAction('DHWPower', false);
+                $this->EnsurePowerForDHW(false);
+            }
             $this->LogMessage('Warmwasser ' . ($want ? 'EIN' : 'AUS') . ' – ' . $text
                 . sprintf(' (Ist %.1f °C)', $ist), KL_MESSAGE);
             return;
@@ -623,6 +635,40 @@ class SamsungWaermepumpe extends IPSModule
             $this->SetValueIfChanged('DHWDemandReason',
                 $text . sprintf(' – angefordert seit %d min, Anlage lädt nicht',
                     (int) ((time() - $seit) / 60)));
+        }
+    }
+
+    /**
+     * Die Warmwasser-Freigabe allein bewirkt nichts, solange die Wärmepumpe
+     * selbst aus ist – am 06.08. stand der Befehl acht Stunden wirkungslos an,
+     * und erst das Einschalten von Hand hat die Ladung gestartet. Für die Ladung
+     * wird sie darum mitgeschaltet und danach wieder ausgeschaltet, damit sie
+     * im Sommer nicht nebenbei ins Haus heizt.
+     *
+     * Ausgeschaltet wird nur, was das Modul selbst eingeschaltet hat: Im Winter
+     * läuft die Wärmepumpe für die Heizung, und die darf eine beendete
+     * Warmwasserladung nicht mit abschalten.
+     */
+    private function EnsurePowerForDHW(bool $an): void
+    {
+        if (!$this->ReadPropertyBoolean('DHWSwitchPower')) {
+            return;
+        }
+        if ($an) {
+            if ((bool) $this->GetValueSafe('Power', false)) {
+                $this->WriteAttributeInteger('PowerByUs', 0);   // lief schon – nicht anfassen
+                return;
+            }
+            $this->RequestAction('Power', true);
+            $this->WriteAttributeInteger('PowerByUs', 1);
+            IPS_Sleep(self::POWER_GAP);
+            $this->LogMessage('Wärmepumpe für die Warmwasserladung eingeschaltet', KL_MESSAGE);
+            return;
+        }
+        if ($this->ReadAttributeInteger('PowerByUs') === 1) {
+            $this->RequestAction('Power', false);
+            $this->WriteAttributeInteger('PowerByUs', 0);
+            $this->LogMessage('Wärmepumpe nach der Warmwasserladung wieder ausgeschaltet', KL_MESSAGE);
         }
     }
 

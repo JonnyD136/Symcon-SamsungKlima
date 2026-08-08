@@ -179,6 +179,15 @@
                     "caption": "Warmwasserbereitung vom Energiemanager freigeben lassen"
                 },
                 {
+                    "type": "CheckBox",
+                    "name": "DHWSwitchPower",
+                    "caption": "Wärmepumpe zum Laden ein- und danach wieder ausschalten"
+                },
+                {
+                    "type": "Label",
+                    "caption": "Nötig, wenn die Wärmepumpe im Sommer sonst aus bleibt: Die Warmwasser-Freigabe allein bewirkt nichts, solange die Anlage aus ist. Ausgeschaltet wird nur, was das Modul selbst eingeschaltet hat – läuft sie im Winter für die Heizung, bleibt sie unangetastet."
+                },
+                {
                     "type": "Label",
                     "caption": "Der Manager schaltet dazu die Variable \"Warmwasser PV-Freigabe\". Ein fester Wochenplan an der Anlage oder im MDT muss dann aus sein – sonst schaltet er alle paar Stunden gegen die PV-Steuerung."
                 },
