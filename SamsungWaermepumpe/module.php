@@ -174,6 +174,8 @@ class SamsungWaermepumpe extends IPSModule
     // Ab diesem Kompressorstrom läuft die Anlage, auch wenn die Frequenz
     // noch 0 meldet (Registerlauf).
     private const COMP_MIN_A     = 0.5;
+    // Ladeleistung, solange noch keine gemessen wurde
+    private const DHW_POWER_FALLBACK = 3500.0;
     private const DHW_DONE_DELTA = 1.0;
 
     // ── Lernen ──
@@ -236,6 +238,9 @@ class SamsungWaermepumpe extends IPSModule
         $this->RegisterPropertyBoolean('DHWSwitchPower', false);
         $this->RegisterPropertyFloat('DHWCriticalTemp', 45.0);
         $this->RegisterPropertyString('DHWCriticalFrom', '00:00');
+        // Prognose schlägt die Uhrzeitregel, sobald eine Instanz hinterlegt ist
+        $this->RegisterPropertyInteger('ForecastInstanceID', 0);
+        $this->RegisterPropertyFloat('ForecastBaseLoad', 800.0);
         $this->RegisterPropertyString('DHWDeadline', '18:00');
         $this->RegisterPropertyFloat('DHWDeadlineTemp', 50.0);
         $this->RegisterPropertyString('DHWEndTime', '21:00');
@@ -589,8 +594,18 @@ class SamsungWaermepumpe extends IPSModule
         } elseif ($pv) {
             $text = 'PV-Überschuss';
         } elseif ($ist <= $this->ReadPropertyFloat('DHWCriticalTemp')) {
-            $text = sprintf('Speicher unter %.0f °C – Notheizung erst ab %s, wartet auf Sonne',
-                $this->ReadPropertyFloat('DHWCriticalTemp'), $this->ReadPropertyString('DHWCriticalFrom'));
+            $plan = $this->ForecastPlan();
+            if ($plan === null) {
+                $text = sprintf('Speicher unter %.0f °C – Notheizung erst ab %s, wartet auf Sonne',
+                    $this->ReadPropertyFloat('DHWCriticalTemp'), $this->ReadPropertyString('DHWCriticalFrom'));
+            } elseif ($plan['window'] !== null) {
+                $text = sprintf('Speicher unter %.0f °C – wartet, ab %02d:00 sind %.1f kW erwartet',
+                    $this->ReadPropertyFloat('DHWCriticalTemp'), $plan['window'], $plan['bestWatt'] / 1000);
+            } else {
+                $text = sprintf('Speicher unter %.0f °C – heute kein Fenster mehr (max %.1f kW), lädt ab %02d:00',
+                    $this->ReadPropertyFloat('DHWCriticalTemp'), $plan['bestWatt'] / 1000,
+                    $plan['bestHour'] ?? (int) date('G'));
+            }
         } else {
             $text = 'Wartet auf PV-Überschuss';
         }
@@ -706,11 +721,64 @@ class SamsungWaermepumpe extends IPSModule
      */
     private function CriticalAllowed(): bool
     {
+        $plan = $this->ForecastPlan();
+        if ($plan !== null) {
+            // Kommt heute noch ein Fenster, das die Ladung trägt? Dann warten.
+            if ($plan['window'] !== null) {
+                return false;
+            }
+            // Sonst zur ertragreichsten verbleibenden Stunde laden statt sofort:
+            // Das ist zugleich die wärmste Tageszeit, und daran hängt der COP.
+            return $plan['bestHour'] === null || (int) date('G') >= $plan['bestHour'];
+        }
+
+        // Ohne Prognosemodul bleibt die feste Uhrzeit als Ersatzregel.
         $ab = $this->ParseTime($this->ReadPropertyString('DHWCriticalFrom'));
         if ($ab === null || $ab <= 0) {
             return true;
         }
         return ((int) date('H') * 60 + (int) date('i')) >= $ab;
+    }
+
+    /**
+     * Fragt das Prognosemodul, ob heute noch genug Sonne kommt.
+     *
+     * „Genug" heißt: eine Stunde, in der die vorhergesagte Erzeugung die
+     * gelernte Ladeleistung plus Grundlast trägt – die Prognose sagt die
+     * Erzeugung, nicht den Überschuss, das Haus zieht davon ab.
+     *
+     * @return array{needed:float,window:?int,bestHour:?int,bestWatt:int}|null
+     *         null, wenn kein Prognosemodul hinterlegt ist
+     */
+    private function ForecastPlan(): ?array
+    {
+        $fc = $this->ReadPropertyInteger('ForecastInstanceID');
+        if ($fc <= 0 || !IPS_InstanceExists($fc) || !function_exists('pvFC_getHourForecast')) {
+            return null;
+        }
+        $noetig = ($this->MedianOf('PowerSamples') ?? self::DHW_POWER_FALLBACK)
+            + $this->ReadPropertyFloat('ForecastBaseLoad');
+
+        $jetzt = (int) date('G');
+        $fenster = null;
+        $bestH = null;
+        $bestW = 0;
+        for ($h = $jetzt; $h <= 21; $h++) {
+            try {
+                $w = (int) pvFC_getHourForecast($fc, mktime($h, 0, 0, (int) date('n'), (int) date('j'), (int) date('Y')));
+            } catch (Throwable $e) {
+                $this->SendDebug('Prognose', 'Abruf fehlgeschlagen: ' . $e->getMessage(), 0);
+                return null;
+            }
+            if ($w > $bestW) {
+                $bestW = $w;
+                $bestH = $h;
+            }
+            if ($fenster === null && $w >= $noetig) {
+                $fenster = $h;
+            }
+        }
+        return ['needed' => $noetig, 'window' => $fenster, 'bestHour' => $bestH, 'bestWatt' => $bestW];
     }
 
     /** Liegt die aktuelle Uhrzeit im Nachheiz-Fenster [Deadline, Ende)? */

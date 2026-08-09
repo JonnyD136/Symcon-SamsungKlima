@@ -206,6 +206,23 @@
                     "validate": "^\\d{1,2}:\\d{2}$"
                 },
                 {
+                    "type": "SelectInstance",
+                    "name": "ForecastInstanceID",
+                    "caption": "PV-Prognose-Instanz (optional) – schlägt die Uhrzeit oben"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "ForecastBaseLoad",
+                    "caption": "Grundlast des Hauses, die von der Prognose abgezogen wird (W)",
+                    "digits": 0,
+                    "minimum": 0,
+                    "maximum": 5000
+                },
+                {
+                    "type": "Label",
+                    "caption": "Mit Prognose entscheidet nicht mehr die Uhr: Ist heute noch eine Stunde vorhergesagt, die Ladeleistung plus Grundlast trägt, wird gewartet. Sonst wird zur ertragreichsten verbleibenden Stunde geladen – das ist zugleich die wärmste Tageszeit, und daran hängt der COP."
+                },
+                {
                     "type": "Label",
                     "caption": "Fällt der Speicher vormittags unter die kritische Marke, ist die Sonne noch nicht am Zenit – sofort zu laden hieße, den Tagespeak zu verschenken und stattdessen Netzstrom zu ziehen. Bis zu dieser Uhrzeit wird darum gewartet."
                 },
