@@ -171,6 +171,9 @@ class SamsungWaermepumpe extends IPSModule
     // Pause zwischen „Anlage ein" und „Warmwasser ein" – der Kältekreis
     // braucht den Moment, sonst verwirft die Anlage die zweite Anweisung.
     private const POWER_GAP      = 250;
+    // Ab diesem Kompressorstrom läuft die Anlage, auch wenn die Frequenz
+    // noch 0 meldet (Registerlauf).
+    private const COMP_MIN_A     = 0.5;
     private const DHW_DONE_DELTA = 1.0;
 
     // ── Lernen ──
@@ -232,6 +235,7 @@ class SamsungWaermepumpe extends IPSModule
         $this->RegisterPropertyBoolean('DHWPVEnabled', false);
         $this->RegisterPropertyBoolean('DHWSwitchPower', false);
         $this->RegisterPropertyFloat('DHWCriticalTemp', 45.0);
+        $this->RegisterPropertyString('DHWCriticalFrom', '00:00');
         $this->RegisterPropertyString('DHWDeadline', '18:00');
         $this->RegisterPropertyFloat('DHWDeadlineTemp', 50.0);
         $this->RegisterPropertyString('DHWEndTime', '21:00');
@@ -564,7 +568,7 @@ class SamsungWaermepumpe extends IPSModule
             $grund  = '';
         }
         if (!$forced) {
-            if ($ist <= $this->ReadPropertyFloat('DHWCriticalTemp')) {
+            if ($ist <= $this->ReadPropertyFloat('DHWCriticalTemp') && $this->CriticalAllowed()) {
                 $forced = true;
                 $grund  = 'Kritisch';
             } elseif ($imFenster && $ist < $dlTemp) {
@@ -584,6 +588,9 @@ class SamsungWaermepumpe extends IPSModule
                 : sprintf('Nachheizen ab %02d:%02d (unter %.1f °C)', (int) ($dlMin / 60), $dlMin % 60, $dlTemp);
         } elseif ($pv) {
             $text = 'PV-Überschuss';
+        } elseif ($ist <= $this->ReadPropertyFloat('DHWCriticalTemp')) {
+            $text = sprintf('Speicher unter %.0f °C – Notheizung erst ab %s, wartet auf Sonne',
+                $this->ReadPropertyFloat('DHWCriticalTemp'), $this->ReadPropertyString('DHWCriticalFrom'));
         } else {
             $text = 'Wartet auf PV-Überschuss';
         }
@@ -681,8 +688,29 @@ class SamsungWaermepumpe extends IPSModule
      */
     private function DHWRunning(): bool
     {
-        return (int) $this->GetValueSafe('CompFreq', 0) > 0
-            && (int) $this->GetValueSafe('ThreeWayValve', 0) === self::VALVE_DHW;
+        // Die Frequenz hinkt nach: Am 08.08. zog der Verdichter bereits 3,5 A,
+        // während das Register noch 0 Hz meldete – eine halbe Minute lang galt
+        // die Ladung damit als nicht begonnen und fehlte in der Vermessung.
+        // Der Strom ist früher da, also zählt beides.
+        $laeuft = (int) $this->GetValueSafe('CompFreq', 0) > 0
+            || (float) $this->GetValueSafe('CompCurrent', 0.0) >= self::COMP_MIN_A;
+        return $laeuft && (int) $this->GetValueSafe('ThreeWayValve', 0) === self::VALVE_DHW;
+    }
+
+    /**
+     * Darf jetzt notgeheizt werden? Vor der eingestellten Uhrzeit nicht: Fällt
+     * der Speicher vormittags unter die kritische Marke, ist die Sonne noch
+     * nicht am Zenit – sofort zu laden hieße, den Tagespeak zu verschenken und
+     * stattdessen Netzstrom zu ziehen. Am 09.08. lief genau das: 09:48 auf
+     * 44,8 °C, Ladung mit 2,2 kW Netzbezug, während die PV noch stieg.
+     */
+    private function CriticalAllowed(): bool
+    {
+        $ab = $this->ParseTime($this->ReadPropertyString('DHWCriticalFrom'));
+        if ($ab === null || $ab <= 0) {
+            return true;
+        }
+        return ((int) date('H') * 60 + (int) date('i')) >= $ab;
     }
 
     /** Liegt die aktuelle Uhrzeit im Nachheiz-Fenster [Deadline, Ende)? */
