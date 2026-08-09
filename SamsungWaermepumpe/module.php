@@ -759,13 +759,20 @@ class SamsungWaermepumpe extends IPSModule
         $noetig = ($this->MedianOf('PowerSamples') ?? self::DHW_POWER_FALLBACK)
             + $this->ReadPropertyFloat('ForecastBaseLoad');
 
+        // Das Prognosemodul liefert wahlweise Wh oder kWh – die Einheit steht in
+        // seiner eigenen Konfiguration. Ungeprüft verglichen wäre jede Stunde
+        // „zu wenig" und es würde sofort geladen statt zu warten.
+        $pcfg = json_decode(IPS_GetConfiguration($fc), true) ?: [];
+        $faktor = !empty($pcfg['kwh']) ? 1000.0 : 1.0;
+
         $jetzt = (int) date('G');
         $fenster = null;
         $bestH = null;
         $bestW = 0;
         for ($h = $jetzt; $h <= 21; $h++) {
             try {
-                $w = (int) pvFC_getHourForecast($fc, mktime($h, 0, 0, (int) date('n'), (int) date('j'), (int) date('Y')));
+                $w = (int) round($faktor
+                    * pvFC_getHourForecast($fc, mktime($h, 0, 0, (int) date('n'), (int) date('j'), (int) date('Y'))));
             } catch (Throwable $e) {
                 $this->SendDebug('Prognose', 'Abruf fehlgeschlagen: ' . $e->getMessage(), 0);
                 return null;
