@@ -114,6 +114,8 @@ class SamsungKlima extends IPSModule
         //                   dieselben Watt gleichzeitig ab.
         $this->RegisterPropertyInteger('PVSource', self::PVSRC_OWN);
         $this->RegisterPropertyBoolean('PVForceRegulation', false);
+        $this->RegisterPropertyInteger('PresenceVarID', 0);
+        $this->RegisterPropertyBoolean('PresenceInverted', false);
         $this->RegisterPropertyInteger('PVSurplusVarID', 0);
         $this->RegisterPropertyBoolean('PVGridSign', false);
         $this->RegisterPropertyFloat('PVThreshold', 1500.0);   // ~ erwartete Klima-Leistung
@@ -179,6 +181,7 @@ class SamsungKlima extends IPSModule
             return;
         }
         if ($SenderID === $this->ReadPropertyInteger('ReleaseVarID')
+            || $SenderID === $this->ReadPropertyInteger('PresenceVarID')
             || $SenderID === $this->ReadPropertyInteger('PVSurplusVarID')) {
             $this->Regulate();
             return;
@@ -239,6 +242,7 @@ class SamsungKlima extends IPSModule
                   $this->ReadPropertyInteger('ExtSetpointVarID'),
                   $this->ReadPropertyInteger('ReleaseVarID'),
                   $this->ReadPropertyInteger('WindowVarID'),
+                  $this->ReadPropertyInteger('PresenceVarID'),
                   $this->ReadPropertyInteger('PVSurplusVarID')] as $extra) {
             if ($extra > 0 && IPS_VariableExists($extra)) {
                 $watched[] = $extra;
@@ -396,7 +400,24 @@ class SamsungKlima extends IPSModule
     /** Hält allein die PV-Freigabe den Raum gerade in Betrieb? */
     private function PVRegulates(): bool
     {
-        return $this->ReadPropertyBoolean('PVForceRegulation') && $this->PVActive();
+        // Ist jemand im Raum, wird nicht hart geschaltet. Ein besetzter Raum
+        // soll nicht im Takt der Wolken an- und ausgehen; die PV-Freigabe wirkt
+        // dann nur noch über den Sollwert – und auch das nur, wenn die
+        // Raumregelung ohnehin läuft.
+        return $this->ReadPropertyBoolean('PVForceRegulation')
+            && !$this->Presence()
+            && $this->PVActive();
+    }
+
+    /** Ist der Raum belegt? Ohne hinterlegten Melder: nein. */
+    private function Presence(): bool
+    {
+        $p = $this->ReadPropertyInteger('PresenceVarID');
+        if ($p <= 0 || !IPS_VariableExists($p)) {
+            return false;
+        }
+        $v = (bool) GetValue($p);
+        return $this->ReadPropertyBoolean('PresenceInverted') ? !$v : $v;
     }
 
     /**

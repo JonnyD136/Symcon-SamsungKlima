@@ -7,122 +7,382 @@
         {
             "type": "RowLayout",
             "items": [
-                { "type": "NumberSpinner", "name": "Hauptgruppe", "caption": "Hauptgruppe", "minimum": 0, "maximum": 31 },
-                { "type": "NumberSpinner", "name": "Mittelgruppe", "caption": "Mittelgruppe (Raum 1–5)", "minimum": 0, "maximum": 7 },
-                { "type": "ValidationTextBox", "name": "RoomName", "caption": "Raumname (optional)" }
+                {
+                    "type": "NumberSpinner",
+                    "name": "Hauptgruppe",
+                    "caption": "Hauptgruppe",
+                    "minimum": 0,
+                    "maximum": 31
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "Mittelgruppe",
+                    "caption": "Mittelgruppe (Raum 1–5)",
+                    "minimum": 0,
+                    "maximum": 7
+                },
+                {
+                    "type": "ValidationTextBox",
+                    "name": "RoomName",
+                    "caption": "Raumname (optional)"
+                }
             ]
         },
         {
             "type": "ExpansionPanel",
             "caption": "Sollwertgrenzen",
             "items": [
-                { "type": "NumberSpinner", "name": "SollMin", "caption": "Minimum (°C)", "minimum": 5, "maximum": 40 },
-                { "type": "NumberSpinner", "name": "SollMax", "caption": "Maximum (°C)", "minimum": 5, "maximum": 40 }
+                {
+                    "type": "NumberSpinner",
+                    "name": "SollMin",
+                    "caption": "Minimum (°C)",
+                    "minimum": 5,
+                    "maximum": 40
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "SollMax",
+                    "caption": "Maximum (°C)",
+                    "minimum": 5,
+                    "maximum": 40
+                }
             ]
         },
         {
             "type": "ExpansionPanel",
             "caption": "Thermostat-Regelung (Kühlen)",
             "items": [
-                { "type": "Label", "caption": "Ein/Aus der Regelung erfolgt über die Variable \"Regelung aktiv\" (Schalter in der Instanz, z. B. per Szene/Zeitplan/Anwesenheit)." },
-                { "type": "SelectVariable", "name": "ExtTempVarID", "caption": "Ist-Temperatur-Quelle (KNX-Wandthermostat). Leer = Samsung-Isttemperatur" },
-                { "type": "SelectVariable", "name": "ExtSetpointVarID", "caption": "Soll-Quelle (KNX-Wandthermostat). Leer = Modul-Sollwert" },
                 {
-                    "type": "Select", "name": "ControlMode", "caption": "Regelmodus",
+                    "type": "Label",
+                    "caption": "Ein/Aus der Regelung erfolgt über die Variable \"Regelung aktiv\" (Schalter in der Instanz, z. B. per Szene/Zeitplan/Anwesenheit)."
+                },
+                {
+                    "type": "SelectVariable",
+                    "name": "ExtTempVarID",
+                    "caption": "Ist-Temperatur-Quelle (KNX-Wandthermostat). Leer = Samsung-Isttemperatur"
+                },
+                {
+                    "type": "SelectVariable",
+                    "name": "ExtSetpointVarID",
+                    "caption": "Soll-Quelle (KNX-Wandthermostat). Leer = Modul-Sollwert"
+                },
+                {
+                    "type": "Select",
+                    "name": "ControlMode",
+                    "caption": "Regelmodus",
                     "options": [
-                        { "caption": "Sollwert-Folgen (Inverter moduliert)", "value": 1 },
-                        { "caption": "Zweipunkt (Ein/Aus)", "value": 0 }
+                        {
+                            "caption": "Sollwert-Folgen (Inverter moduliert)",
+                            "value": 1
+                        },
+                        {
+                            "caption": "Zweipunkt (Ein/Aus)",
+                            "value": 0
+                        }
                     ]
                 },
-                { "type": "NumberSpinner", "name": "Deadband", "caption": "Einschaltschwelle über Soll (K) – Wiederanlauf bei Sollwert-Folgen bzw. Totzone bei Zweipunkt", "digits": 1, "minimum": 0.2, "maximum": 10 },
-                { "type": "NumberSpinner", "name": "OffReserve", "caption": "Ausschalt-Reserve unter Soll (K) – derzeit ohne Funktion (kein temperaturbedingtes Abschalten mehr)", "digits": 1, "minimum": 0.2, "maximum": 5 },
-                { "type": "SelectVariable", "name": "ReleaseVarID", "caption": "Globale Kühlfreigabe (Variable \"Freigabe\" der Klima Zentrale). Leer = immer freigegeben" },
-                { "type": "CheckBox", "name": "TurnOffWhenInactive", "caption": "Klima ausschalten, wenn Regelung/Freigabe inaktiv (Abwesenheit)" },
-                { "type": "NumberSpinner", "name": "MinToggle", "caption": "Mindest-Umschaltzeit (Sekunden)", "minimum": 0, "maximum": 3600 },
-                { "type": "NumberSpinner", "name": "RegInterval", "caption": "Sicherheits-Check-Intervall (Sekunden, 0 = aus)", "minimum": 0, "maximum": 3600 }
+                {
+                    "type": "NumberSpinner",
+                    "name": "Deadband",
+                    "caption": "Einschaltschwelle über Soll (K) – Wiederanlauf bei Sollwert-Folgen bzw. Totzone bei Zweipunkt",
+                    "digits": 1,
+                    "minimum": 0.2,
+                    "maximum": 10
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "OffReserve",
+                    "caption": "Ausschalt-Reserve unter Soll (K) – derzeit ohne Funktion (kein temperaturbedingtes Abschalten mehr)",
+                    "digits": 1,
+                    "minimum": 0.2,
+                    "maximum": 5
+                },
+                {
+                    "type": "SelectVariable",
+                    "name": "ReleaseVarID",
+                    "caption": "Globale Kühlfreigabe (Variable \"Freigabe\" der Klima Zentrale). Leer = immer freigegeben"
+                },
+                {
+                    "type": "CheckBox",
+                    "name": "TurnOffWhenInactive",
+                    "caption": "Klima ausschalten, wenn Regelung/Freigabe inaktiv (Abwesenheit)"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "MinToggle",
+                    "caption": "Mindest-Umschaltzeit (Sekunden)",
+                    "minimum": 0,
+                    "maximum": 3600
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "RegInterval",
+                    "caption": "Sicherheits-Check-Intervall (Sekunden, 0 = aus)",
+                    "minimum": 0,
+                    "maximum": 3600
+                }
             ]
         },
         {
             "type": "ExpansionPanel",
             "caption": "Statusabfrage (Rückmeldung vom Gerät)",
             "items": [
-                { "type": "Label", "caption": "Das MDT SCN-MBGRTU.01 sendet seine Status-Objekte nicht zyklisch. Ohne Abfrage bekommt Symcon Änderungen, die direkt am Gerät (Fernbedienung) gemacht werden, nie mitgeteilt – die Anzeige bleibt auf dem letzten eigenen Befehl stehen. Das Modul fragt die Status-Gruppenadressen darum aktiv per KNX-Leseanforderung ab." },
-                { "type": "NumberSpinner", "name": "PollInterval", "caption": "Abfrage-Intervall (Sekunden, 0 = aus)", "minimum": 0, "maximum": 3600 }
+                {
+                    "type": "Label",
+                    "caption": "Das MDT SCN-MBGRTU.01 sendet seine Status-Objekte nicht zyklisch. Ohne Abfrage bekommt Symcon Änderungen, die direkt am Gerät (Fernbedienung) gemacht werden, nie mitgeteilt – die Anzeige bleibt auf dem letzten eigenen Befehl stehen. Das Modul fragt die Status-Gruppenadressen darum aktiv per KNX-Leseanforderung ab."
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "PollInterval",
+                    "caption": "Abfrage-Intervall (Sekunden, 0 = aus)",
+                    "minimum": 0,
+                    "maximum": 3600
+                }
             ]
         },
         {
             "type": "ExpansionPanel",
             "caption": "Sensor-Offset-Trim (optional, langsames I-Glied)",
             "items": [
-                { "type": "CheckBox", "name": "BiasEnabled", "caption": "Samsung-Soll langsam so trimmen, dass die Wandtemperatur den Soll trifft" },
-                { "type": "NumberSpinner", "name": "BiasKi", "caption": "I-Verstärkung Ki (K pro K·Minute)", "digits": 3, "minimum": 0, "maximum": 1 },
-                { "type": "NumberSpinner", "name": "BiasLimit", "caption": "Bias-Begrenzung (± K)", "digits": 1, "minimum": 0, "maximum": 6 }
+                {
+                    "type": "CheckBox",
+                    "name": "BiasEnabled",
+                    "caption": "Samsung-Soll langsam so trimmen, dass die Wandtemperatur den Soll trifft"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "BiasKi",
+                    "caption": "I-Verstärkung Ki (K pro K·Minute)",
+                    "digits": 3,
+                    "minimum": 0,
+                    "maximum": 1
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "BiasLimit",
+                    "caption": "Bias-Begrenzung (± K)",
+                    "digits": 1,
+                    "minimum": 0,
+                    "maximum": 6
+                }
             ]
         },
         {
             "type": "ExpansionPanel",
             "caption": "Start-Einstellungen der Regelung",
             "items": [
-                { "type": "CheckBox", "name": "StartApply", "caption": "Beim Einschalten durch die Regelung diese Einstellungen setzen" },
                 {
-                    "type": "Select", "name": "StartFan", "caption": "Lüfterstufe",
+                    "type": "CheckBox",
+                    "name": "StartApply",
+                    "caption": "Beim Einschalten durch die Regelung diese Einstellungen setzen"
+                },
+                {
+                    "type": "Select",
+                    "name": "StartFan",
+                    "caption": "Lüfterstufe",
                     "options": [
-                        { "caption": "Auto", "value": 0 },
-                        { "caption": "Niedrig", "value": 1 },
-                        { "caption": "Mittel", "value": 2 },
-                        { "caption": "Hoch", "value": 3 }
+                        {
+                            "caption": "Auto",
+                            "value": 0
+                        },
+                        {
+                            "caption": "Niedrig",
+                            "value": 1
+                        },
+                        {
+                            "caption": "Mittel",
+                            "value": 2
+                        },
+                        {
+                            "caption": "Hoch",
+                            "value": 3
+                        }
                     ]
                 },
-                { "type": "CheckBox", "name": "StartSwing", "caption": "Luftrichtung (Swing) ein" },
-                { "type": "CheckBox", "name": "StartWindFree", "caption": "Wind-Free ein" }
+                {
+                    "type": "CheckBox",
+                    "name": "StartSwing",
+                    "caption": "Luftrichtung (Swing) ein"
+                },
+                {
+                    "type": "CheckBox",
+                    "name": "StartWindFree",
+                    "caption": "Wind-Free ein"
+                }
             ]
         },
         {
             "type": "ExpansionPanel",
             "caption": "Fenster-Sperre",
             "items": [
-                { "type": "SelectVariable", "name": "WindowVarID", "caption": "Fensterkontakt (offen sperrt Kühlung). Bei mehreren: Sammelvariable" },
-                { "type": "CheckBox", "name": "WindowInverted", "caption": "Kontakt invertiert (true = geschlossen)" }
+                {
+                    "type": "SelectVariable",
+                    "name": "WindowVarID",
+                    "caption": "Fensterkontakt (offen sperrt Kühlung). Bei mehreren: Sammelvariable"
+                },
+                {
+                    "type": "CheckBox",
+                    "name": "WindowInverted",
+                    "caption": "Kontakt invertiert (true = geschlossen)"
+                }
             ]
         },
         {
             "type": "ExpansionPanel",
             "caption": "Warm/Kalt-Anzeige am Taster",
             "items": [
-                { "type": "SelectVariable", "name": "HeatCoolStatusVarID", "caption": "KNX-GA für Warm/Kalt-Anzeige (Value der KNX-DPT-Instanz)" },
-                { "type": "CheckBox", "name": "HeatCoolInverted", "caption": "Polarität invertieren (z. B. DPT 1.100: 0 = Kühlen)" },
-                { "type": "NumberSpinner", "name": "WarmMargin", "caption": "Umschalt-Schwelle warm/kalt (K)", "digits": 1, "minimum": 0.1, "maximum": 5 }
+                {
+                    "type": "SelectVariable",
+                    "name": "HeatCoolStatusVarID",
+                    "caption": "KNX-GA für Warm/Kalt-Anzeige (Value der KNX-DPT-Instanz)"
+                },
+                {
+                    "type": "CheckBox",
+                    "name": "HeatCoolInverted",
+                    "caption": "Polarität invertieren (z. B. DPT 1.100: 0 = Kühlen)"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "WarmMargin",
+                    "caption": "Umschalt-Schwelle warm/kalt (K)",
+                    "digits": 1,
+                    "minimum": 0.1,
+                    "maximum": 5
+                }
             ]
         },
         {
             "type": "ExpansionPanel",
             "caption": "PV-Überschuss-Vorkühlung (optional)",
             "items": [
-                { "type": "CheckBox", "name": "PVEnabled", "caption": "PV-Überschuss in diesen Raum kühlen (z. B. Schlafzimmer ja, Büro nein)" },
-                { "type": "Select", "name": "PVSource", "caption": "Wer entscheidet über den Überschuss?", "options": [
-                    { "caption": "Dieses Modul – eigene Schwelle (Felder unten)", "value": 0 },
-                    { "caption": "Energiemanager – über die Variable \"PV-Freigabe\"", "value": 1 }
-                ] },
-                { "type": "Label", "caption": "Sobald mehrere Verbraucher um denselben Überschuss konkurrieren (Warmwasser, weitere Räume), gehört die Entscheidung in den Energiemanager – sonst greifen alle gleichzeitig nach denselben Watt." },
-                { "type": "CheckBox", "name": "PVForceRegulation", "caption": "Bei PV-Freigabe auch kühlen, wenn \"Regelung aktiv\" aus ist (Vorkühlen) – danach wieder aus" },
-                { "type": "SelectVariable", "name": "PVSurplusVarID", "caption": "Nur bei eigener Schwelle: PV-Überschuss-Variable (W) – z. B. \"Netz Leistung\" aus dem Sungrow-Modul" },
-                { "type": "CheckBox", "name": "PVGridSign", "caption": "Variable ist Netzleistung (negativ = Einspeisung/Überschuss)" },
-                { "type": "NumberSpinner", "name": "PVThreshold", "caption": "Ausreichend: Überschuss ≥ erwartete Klima-Leistung (W)", "digits": 0, "minimum": 0, "maximum": 20000 },
-                { "type": "NumberSpinner", "name": "PVHysteresis", "caption": "Abschalt-Hysterese (W unter Schwelle)", "digits": 0, "minimum": 0, "maximum": 5000 },
-                { "type": "NumberSpinner", "name": "PVOnDelay", "caption": "Anhaltend: Mindestdauer über Schwelle bis EIN (s)", "minimum": 0, "maximum": 3600 },
-                { "type": "NumberSpinner", "name": "PVOffDelay", "caption": "Mindestdauer unter Schwelle bis AUS (s)", "minimum": 0, "maximum": 3600 },
-                { "type": "NumberSpinner", "name": "PVOffset", "caption": "Soll-Absenkung bei Überschuss (K)", "digits": 1, "minimum": 0.5, "maximum": 6 },
-                { "type": "NumberSpinner", "name": "PVMinTemp", "caption": "Untergrenze Vorkühlung (°C)", "digits": 1, "minimum": 16, "maximum": 26 }
+                {
+                    "type": "CheckBox",
+                    "name": "PVEnabled",
+                    "caption": "PV-Überschuss in diesen Raum kühlen (z. B. Schlafzimmer ja, Büro nein)"
+                },
+                {
+                    "type": "Select",
+                    "name": "PVSource",
+                    "caption": "Wer entscheidet über den Überschuss?",
+                    "options": [
+                        {
+                            "caption": "Dieses Modul – eigene Schwelle (Felder unten)",
+                            "value": 0
+                        },
+                        {
+                            "caption": "Energiemanager – über die Variable \"PV-Freigabe\"",
+                            "value": 1
+                        }
+                    ]
+                },
+                {
+                    "type": "Label",
+                    "caption": "Sobald mehrere Verbraucher um denselben Überschuss konkurrieren (Warmwasser, weitere Räume), gehört die Entscheidung in den Energiemanager – sonst greifen alle gleichzeitig nach denselben Watt."
+                },
+                {
+                    "type": "CheckBox",
+                    "name": "PVForceRegulation",
+                    "caption": "Bei PV-Freigabe auch kühlen, wenn \"Regelung aktiv\" aus ist (Vorkühlen) – danach wieder aus"
+                },
+                {
+                    "type": "SelectVariable",
+                    "name": "PresenceVarID",
+                    "caption": "Präsenzmelder (optional) – bei Anwesenheit wird nicht hart geschaltet"
+                },
+                {
+                    "type": "CheckBox",
+                    "name": "PresenceInverted",
+                    "caption": "Melder invertiert"
+                },
+                {
+                    "type": "Label",
+                    "caption": "Ein besetzter Raum soll nicht im Takt der Wolken an- und ausgehen. Bei erkannter Anwesenheit wirkt die PV-Freigabe darum nur noch über den Sollwert, und auch das nur, solange \"Regelung aktiv\" läuft."
+                },
+                {
+                    "type": "SelectVariable",
+                    "name": "PVSurplusVarID",
+                    "caption": "Nur bei eigener Schwelle: PV-Überschuss-Variable (W) – z. B. \"Netz Leistung\" aus dem Sungrow-Modul"
+                },
+                {
+                    "type": "CheckBox",
+                    "name": "PVGridSign",
+                    "caption": "Variable ist Netzleistung (negativ = Einspeisung/Überschuss)"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "PVThreshold",
+                    "caption": "Ausreichend: Überschuss ≥ erwartete Klima-Leistung (W)",
+                    "digits": 0,
+                    "minimum": 0,
+                    "maximum": 20000
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "PVHysteresis",
+                    "caption": "Abschalt-Hysterese (W unter Schwelle)",
+                    "digits": 0,
+                    "minimum": 0,
+                    "maximum": 5000
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "PVOnDelay",
+                    "caption": "Anhaltend: Mindestdauer über Schwelle bis EIN (s)",
+                    "minimum": 0,
+                    "maximum": 3600
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "PVOffDelay",
+                    "caption": "Mindestdauer unter Schwelle bis AUS (s)",
+                    "minimum": 0,
+                    "maximum": 3600
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "PVOffset",
+                    "caption": "Soll-Absenkung bei Überschuss (K)",
+                    "digits": 1,
+                    "minimum": 0.5,
+                    "maximum": 6
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "PVMinTemp",
+                    "caption": "Untergrenze Vorkühlung (°C)",
+                    "digits": 1,
+                    "minimum": 16,
+                    "maximum": 26
+                }
             ]
         }
     ],
     "actions": [
-        { "type": "Button", "caption": "Gruppenadressen neu einlesen", "onClick": "SAMK_Discover($id);" },
-        { "type": "Button", "caption": "Status jetzt abfragen", "onClick": "SAMK_PollStatus($id);" },
-        { "type": "Label", "caption": "Nach dem Einlesen zeigt der Instanz-Status, ob alle Objekte gefunden wurden." }
+        {
+            "type": "Button",
+            "caption": "Gruppenadressen neu einlesen",
+            "onClick": "SAMK_Discover($id);"
+        },
+        {
+            "type": "Button",
+            "caption": "Status jetzt abfragen",
+            "onClick": "SAMK_PollStatus($id);"
+        },
+        {
+            "type": "Label",
+            "caption": "Nach dem Einlesen zeigt der Instanz-Status, ob alle Objekte gefunden wurden."
+        }
     ],
     "status": [
-        { "code": 102, "icon": "active", "caption": "Aktiv – Gruppenadressen gefunden" },
-        { "code": 201, "icon": "inactive", "caption": "Gruppenadressen nicht gefunden – bitte Configurator-Import und Haupt-/Mittelgruppe prüfen" }
+        {
+            "code": 102,
+            "icon": "active",
+            "caption": "Aktiv – Gruppenadressen gefunden"
+        },
+        {
+            "code": 201,
+            "icon": "inactive",
+            "caption": "Gruppenadressen nicht gefunden – bitte Configurator-Import und Haupt-/Mittelgruppe prüfen"
+        }
     ]
 }
