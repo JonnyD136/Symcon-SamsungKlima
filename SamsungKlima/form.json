@@ -177,6 +177,15 @@
                     "caption": "Beim Einschalten durch die Regelung diese Einstellungen setzen"
                 },
                 {
+                    "type": "CheckBox",
+                    "name": "StartLearn",
+                    "caption": "Handbedienung als neue Startvorgabe übernehmen"
+                },
+                {
+                    "type": "Label",
+                    "caption": "Stellst du nach einem automatischen Start z. B. Swing oder die Lüfterstufe um, gilt das ab dann als Vorgabe. Ohne diese Option überschreibt jeder Anlauf deine Korrektur wieder mit den Werten unten."
+                },
+                {
                     "type": "Select",
                     "name": "StartFan",
                     "caption": "Lüfterstufe",
@@ -371,6 +380,11 @@
         {
             "type": "Label",
             "caption": "Nach dem Einlesen zeigt der Instanz-Status, ob alle Objekte gefunden wurden."
+        },
+        {
+            "type": "Button",
+            "caption": "Gelernte Start-Einstellungen verwerfen",
+            "onClick": "SAMK_ResetStartSettings($id);"
         }
     ],
     "status": [

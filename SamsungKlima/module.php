@@ -85,6 +85,7 @@ class SamsungKlima extends IPSModule
 
         // Start-Einstellungen, die die Regelung beim Einschalten setzt
         $this->RegisterPropertyBoolean('StartApply', true);
+        $this->RegisterPropertyBoolean('StartLearn', false);
         $this->RegisterPropertyInteger('StartFan', 0);        // 0 Auto
         $this->RegisterPropertyBoolean('StartSwing', false);
         $this->RegisterPropertyBoolean('StartWindFree', false);
@@ -140,6 +141,10 @@ class SamsungKlima extends IPSModule
         $this->RegisterAttributeInteger('PendingUntil', 0);  // Settle-Fenster: Status ignorieren bis
         $this->RegisterAttributeInteger('AutoArmed', 1);     // 1=scharf für Auto-EIN, 0=entschärft (Hand-Aus)
         $this->RegisterAttributeInteger('CommSeen', 0);      // 1=Komm-Status wurde schon einmal empfangen
+        // Von Hand gesetzte Start-Einstellungen (-1 = nichts gelernt, dann gilt die Konfiguration)
+        $this->RegisterAttributeInteger('StartFanLearned', -1);
+        $this->RegisterAttributeInteger('StartSwingLearned', -1);
+        $this->RegisterAttributeInteger('StartWindFreeLearned', -1);
 
         $this->RegisterTimer('RegTimer', 0, 'SAMK_Regulate($_IPS["TARGET"]);');
         $this->RegisterTimer('PollTimer', 0, 'SAMK_PollStatus($_IPS["TARGET"]);');
@@ -300,10 +305,12 @@ class SamsungKlima extends IPSModule
             case 'Fan':
                 $this->WriteKNX('Fan', (int) $Value);
                 $this->SetValueIfChanged('Fan', (int) $Value);
+                $this->LearnStartSetting('Fan', (int) $Value);
                 break;
             case 'Swing':
                 $this->WriteKNX('Swing', (bool) $Value ? 1 : 0);
                 $this->SetValueIfChanged('Swing', (bool) $Value);
+                $this->LearnStartSetting('Swing', (bool) $Value ? 1 : 0);
                 break;
             case 'Setpoint':
                 $v = $this->ClampSetpoint((float) $Value);
@@ -325,6 +332,7 @@ class SamsungKlima extends IPSModule
             case 'WindFree':
                 $this->WriteKNX('WindFree', (bool) $Value ? self::WINDFREE_ON : self::WINDFREE_OFF);
                 $this->SetValueIfChanged('WindFree', (bool) $Value);
+                $this->LearnStartSetting('WindFree', (bool) $Value ? 1 : 0);
                 break;
             case 'RegActive':
                 $this->SetRegActive((bool) $Value);
@@ -590,23 +598,66 @@ class SamsungKlima extends IPSModule
             $on ? 'EIN' : 'AUS', $this->CurrentIst() ?? 0, $this->CurrentSoll()), KL_MESSAGE);
     }
 
-    /** Vom Regler beim Einschalten gewünschte Start-Einstellungen setzen. */
+    /**
+     * Vom Regler beim Einschalten gewünschte Start-Einstellungen setzen.
+     * Was der Nutzer zuletzt von Hand eingestellt hat, geht dabei vor: Sonst
+     * überschreibt jeder automatische Start seine Korrektur wieder, und er
+     * müsste Swing oder Lüfterstufe nach jedem PV-Anlauf neu setzen.
+     */
     private function ApplyStartSettings(): void
     {
         if (!$this->ReadPropertyBoolean('StartApply')) {
             return;
         }
-        $fan = $this->ReadPropertyInteger('StartFan');
+        $fan = $this->StartValue('Fan', $this->ReadPropertyInteger('StartFan'));
         $this->WriteKNX('Fan', $fan);
         $this->SetValueIfChanged('Fan', $fan);
 
-        $swing = $this->ReadPropertyBoolean('StartSwing');
+        $swing = (bool) $this->StartValue('Swing', $this->ReadPropertyBoolean('StartSwing') ? 1 : 0);
         $this->WriteKNX('Swing', $swing ? 1 : 0);
         $this->SetValueIfChanged('Swing', $swing);
 
-        $wf = $this->ReadPropertyBoolean('StartWindFree');
+        $wf = (bool) $this->StartValue('WindFree', $this->ReadPropertyBoolean('StartWindFree') ? 1 : 0);
         $this->WriteKNX('WindFree', $wf ? self::WINDFREE_ON : self::WINDFREE_OFF);
         $this->SetValueIfChanged('WindFree', $wf);
+    }
+
+    /** Gelernter Startwert, sonst der konfigurierte. */
+    private function StartValue(string $was, int $vorgabe): int
+    {
+        if (!$this->ReadPropertyBoolean('StartLearn')) {
+            return $vorgabe;
+        }
+        $g = $this->ReadAttributeInteger('Start' . $was . 'Learned');
+        return $g >= 0 ? $g : $vorgabe;
+    }
+
+    /**
+     * Handbedienung als neue Startvorgabe merken. Nur was über RequestAction
+     * kommt – also aus Visu oder Skript. Die eigenen Schreibvorgänge aus
+     * ApplyStartSettings() laufen bewusst an dieser Stelle vorbei, sonst würde
+     * sich das Modul seine eigene Vorgabe immer wieder selbst bestätigen.
+     */
+    private function LearnStartSetting(string $was, int $wert): void
+    {
+        if (!$this->ReadPropertyBoolean('StartLearn')) {
+            return;
+        }
+        $attr = 'Start' . $was . 'Learned';
+        if ($this->ReadAttributeInteger($attr) === $wert) {
+            return;
+        }
+        $this->WriteAttributeInteger($attr, $wert);
+        $this->LogMessage(sprintf('Start-Einstellung gelernt: %s = %d', $was, $wert), KL_MESSAGE);
+    }
+
+    /** Gelernte Start-Einstellungen verwerfen, wieder die Konfiguration nutzen. */
+    public function ResetStartSettings()
+    {
+        foreach (['Fan', 'Swing', 'WindFree'] as $w) {
+            $this->WriteAttributeInteger('Start' . $w . 'Learned', -1);
+        }
+        $this->LogMessage('Gelernte Start-Einstellungen verworfen', KL_MESSAGE);
     }
 
     /** Klima sicher ausschalten (Fenster/Freigabe), ohne Anti-Takt-Sperre. */
