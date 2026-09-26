@@ -67,6 +67,22 @@
                     "caption": "Soll-Quelle (KNX-Wandthermostat). Leer = Modul-Sollwert"
                 },
                 {
+                    "type": "NumberSpinner",
+                    "name": "CoolOffset",
+                    "caption": "Kühl-Soll = Heiz-Soll des Wandthermostats + (K)",
+                    "digits": 1,
+                    "minimum": 0,
+                    "maximum": 6
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "CoolMin",
+                    "caption": "Kühl-Soll mindestens (°C)",
+                    "digits": 1,
+                    "minimum": 16,
+                    "maximum": 30
+                },
+                {
                     "type": "Select",
                     "name": "ControlMode",
                     "caption": "Regelmodus",
@@ -233,6 +249,26 @@
                     "type": "CheckBox",
                     "name": "WindowInverted",
                     "caption": "Kontakt invertiert (true = geschlossen)"
+                }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "Abwesenheit",
+            "items": [
+                {
+                    "type": "Label",
+                    "caption": "Wechselt die Variable auf abwesend, geht die Klima aus – auch wenn sie von Hand eingeschaltet war. Automatik-Läufe starten während der Abwesenheit nicht; ein von unterwegs gestarteter Handlauf bleibt an."
+                },
+                {
+                    "type": "SelectVariable",
+                    "name": "AwayVarID",
+                    "caption": "Abwesenheit (true = niemand zuhause)"
+                },
+                {
+                    "type": "CheckBox",
+                    "name": "AwayInverted",
+                    "caption": "Variable invertiert (true = jemand zuhause)"
                 }
             ]
         },

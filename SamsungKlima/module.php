@@ -53,7 +53,16 @@ class SamsungKlima extends IPSModule
 
     // Nach einem eigenen Power-Befehl wird der KNX-Status für diese Zeit nicht
     // gegen den Befehl gewertet (verzögerte/sporadische Rückmeldung → Anzeige-Flattern).
+    // Meldung, wenn das Einschalten an der Fenster-Sperre scheitert. Geht als
+    // Ausnahme an die Visu (Fehlermeldung beim Nutzer) und ins Meldungs-Log.
+    private const MSG_WINDOW_OPEN =
+        'Klima kann nicht eingeschaltet werden: Fenster ist offen.';
+
     private const PENDING_SETTLE = 120;
+
+    // Mindestabstand des Kühl-Solls zum Heiz-Soll des Wandthermostats (K). Ohne
+    // Abstand arbeiten Heizung und Klima im selben Raum gegeneinander.
+    private const HEAT_COOL_GAP = 1.0;
 
     // Pause zwischen zwei Leseanforderungen einer Statusabfrage (ms) – der Bus
     // soll nicht mit ~10 Telegrammen auf einen Schlag belastet werden.
@@ -76,6 +85,10 @@ class SamsungKlima extends IPSModule
 
         $this->RegisterPropertyInteger('ExtTempVarID', 0);
         $this->RegisterPropertyInteger('ExtSetpointVarID', 0);
+        // Der Wandthermostat liefert den HEIZ-Soll. Gekühlt wird auf einen eigenen
+        // Kühl-Soll = Heiz-Soll + CoolOffset, mindestens CoolMin.
+        $this->RegisterPropertyFloat('CoolOffset', 2.0);
+        $this->RegisterPropertyFloat('CoolMin', 24.0);
         $this->RegisterPropertyInteger('ControlMode', self::CTRL_SETPOINT);
         $this->RegisterPropertyFloat('Deadband', 1.0);
         $this->RegisterPropertyFloat('OffReserve', 1.0);
@@ -99,6 +112,10 @@ class SamsungKlima extends IPSModule
 
         $this->RegisterPropertyInteger('WindowVarID', 0);
         $this->RegisterPropertyBoolean('WindowInverted', false);
+
+        // Abwesenheit: beim Verlassen des Hauses aus – auch im Handbetrieb
+        $this->RegisterPropertyInteger('AwayVarID', 0);
+        $this->RegisterPropertyBoolean('AwayInverted', false);
 
         $this->RegisterPropertyInteger('HeatCoolStatusVarID', 0);
         $this->RegisterPropertyBoolean('HeatCoolInverted', false);
@@ -145,6 +162,10 @@ class SamsungKlima extends IPSModule
         $this->RegisterAttributeInteger('StartFanLearned', -1);
         $this->RegisterAttributeInteger('StartSwingLearned', -1);
         $this->RegisterAttributeInteger('StartWindFreeLearned', -1);
+        $this->RegisterAttributeInteger('PowerByAuto', 0);   // 1 = die Regelung hat eingeschaltet, 0 = Hand/Fernbedienung
+        $this->RegisterAttributeInteger('SollByReg', 0);     // 1 = Geräte-Soll stammt von der Regelung (Bias/PV)
+        $this->RegisterAttributeInteger('LastAway', -1);     // Flankenerkennung Abwesenheit
+        $this->RegisterAttributeInteger('Migrated', 0);      // einmalige Bereinigung Build 43
 
         $this->RegisterTimer('RegTimer', 0, 'SAMK_Regulate($_IPS["TARGET"]);');
         $this->RegisterTimer('PollTimer', 0, 'SAMK_PollStatus($_IPS["TARGET"]);');
@@ -162,6 +183,12 @@ class SamsungKlima extends IPSModule
         }
         $this->WriteAttributeString('WatchedVars', '[]');
 
+        // Beim Hochlauf der Box ist der Kernel hier noch nicht bereit. Ohne diese
+        // Anmeldung holt niemand Discover() nach: Poll, Nachrichten und
+        // Fensterwächter blieben bis zum nächsten ApplyChanges tot (so geschehen
+        // nach dem Neustart am 29.08.2026 – vier Wochen ohne Statusabfrage).
+        $this->RegisterMessage(0, IPS_KERNELMESSAGE);
+
         if (IPS_GetKernelRunlevel() !== KR_READY) {
             return;
         }
@@ -171,6 +198,10 @@ class SamsungKlima extends IPSModule
 
     public function MessageSink($TimeStamp, $SenderID, $Message, $Data)
     {
+        if ($Message == IPS_KERNELMESSAGE && $Data[0] == KR_READY) {
+            $this->Discover();
+            return;
+        }
         if ($Message !== self::VM_UPDATE) {
             return;
         }
@@ -183,6 +214,10 @@ class SamsungKlima extends IPSModule
         }
         if ($SenderID === $this->ReadPropertyInteger('WindowVarID')) {
             $this->WindowGuard();
+            return;
+        }
+        if ($SenderID === $this->ReadPropertyInteger('AwayVarID')) {
+            $this->AwayGuard();
             return;
         }
         if ($SenderID === $this->ReadPropertyInteger('ReleaseVarID')
@@ -247,6 +282,7 @@ class SamsungKlima extends IPSModule
                   $this->ReadPropertyInteger('ExtSetpointVarID'),
                   $this->ReadPropertyInteger('ReleaseVarID'),
                   $this->ReadPropertyInteger('WindowVarID'),
+                  $this->ReadPropertyInteger('AwayVarID'),
                   $this->ReadPropertyInteger('PresenceVarID'),
                   $this->ReadPropertyInteger('PVSurplusVarID')] as $extra) {
             if ($extra > 0 && IPS_VariableExists($extra)) {
@@ -282,10 +318,48 @@ class SamsungKlima extends IPSModule
                 $this->MirrorStatus($ident, GetValue((int) $vid));
             }
             $this->UpdateWarmCold();
+            $this->MigrateOnce();
+        }
+
+        // Aktuellen Abwesenheitszustand merken, ohne beim (Neu-)Start zu schalten
+        if ($this->VarConfigured('AwayVarID')) {
+            $this->WriteAttributeInteger('LastAway', $this->Away() ? 1 : 0);
         }
 
         // Falls ein Fenster bereits offen ist, wenn das Modul (neu) startet
         $this->WindowGuard();
+    }
+
+    /**
+     * Einmalige Bereinigung beim Update auf Build 43:
+     * - Bis Build 42 lief der Wunsch-Soll bei PV-Läufen der Geräte-Rückmeldung
+     *   hinterher und stand danach auf 18 °C. Jedes Einschalten aus der Visu
+     *   kühlte dann auf 18 °C. Mit Soll vom Wandthermostat gilt jetzt der
+     *   Kühl-Soll, der Wunsch-Soll wird darauf zurückgesetzt.
+     * - Ein laufender PV-Lauf (Freigabe an, Regelung aus) wird als Automatik-Lauf
+     *   übernommen, damit ihn das Ende der Freigabe weiterhin abschaltet.
+     */
+    private function MigrateOnce(): void
+    {
+        if ($this->ReadAttributeInteger('Migrated') >= 43) {
+            return;
+        }
+        $this->WriteAttributeInteger('Migrated', 43);
+        $this->WriteAttributeFloat('Bias', 0.0);
+
+        $on = (bool) $this->GetValueSafe('Power', false);
+        if ($on && (bool) $this->GetValueSafe('PVRelease', false)
+            && !(bool) $this->GetValueSafe('RegActive', false)) {
+            $this->WriteAttributeInteger('PowerByAuto', 1);
+            $this->WriteAttributeInteger('SollByReg', 1);
+            return;
+        }
+        if ($this->VarConfigured('ExtSetpointVarID')
+            && (float) $this->GetValueSafe('Setpoint', 24.0) < $this->ReadPropertyFloat('CoolMin')) {
+            $this->WriteAttributeInteger('SollByReg', 1);
+            $this->RestoreComfortSetpoint();
+            $this->LogMessage('Build 43: Wunsch-Soll auf Kühl-Soll zurückgesetzt', KL_MESSAGE);
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -296,7 +370,12 @@ class SamsungKlima extends IPSModule
     {
         switch ($Ident) {
             case 'Power':
-                $this->SetPower((bool) $Value);
+                if (!$this->SetPower((bool) $Value)) {
+                    // Handbedienung: die Sperre darf nicht stumm bleiben, sonst
+                    // springt in der Visu nur der Schalter zurueck und niemand
+                    // sieht den Grund. Symcon zeigt die Ausnahme als Fehlermeldung.
+                    throw new Exception(self::MSG_WINDOW_OPEN);
+                }
                 break;
             case 'Mode':
                 $this->WriteKNX('Mode', (int) $Value);
@@ -315,6 +394,7 @@ class SamsungKlima extends IPSModule
             case 'Setpoint':
                 $v = $this->ClampSetpoint((float) $Value);
                 $this->SetValueIfChanged('Setpoint', $v);
+                $this->WriteAttributeInteger('SollByReg', 0);
                 $this->UpdateWarmCold();
                 // Frisches Trim-Fenster: verhindert, dass der aufgelaufene Bias
                 // deinen neuen Soll im nächsten Zyklus sofort wieder verbiegt.
@@ -345,15 +425,20 @@ class SamsungKlima extends IPSModule
         }
     }
 
-    /** Einschalten: erst Betriebsart (Kühlen) schreiben, dann Ein (FJM-Regel). */
-    private function SetPower(bool $on): void
+    /**
+     * Einschalten: erst Betriebsart (Kühlen) schreiben, dann Ein (FJM-Regel).
+     *
+     * @return bool false, wenn wegen offenem Fenster nicht eingeschaltet wurde.
+     */
+    private function SetPower(bool $on): bool
     {
         if ($on && $this->WindowOpen()) {
             // Fenster offen → Einschalten blockieren, sicher aus
             $this->WriteKNX('Power', false);
             $this->SetValueIfChanged('Power', false);
             $this->MarkPowerPending(false);
-            return;
+            $this->LogMessage(self::MSG_WINDOW_OPEN, KL_WARNING);
+            return false;
         }
         if ($on) {
             $this->WriteKNX('Mode', self::MODE_COOL);
@@ -366,6 +451,14 @@ class SamsungKlima extends IPSModule
         $this->SetValueIfChanged('Power', $on);
         $this->MarkPowerPending($on);
         $this->WriteAttributeInteger('LastToggle', time());
+        if ($on) {
+            // Handbetrieb: PV-Ende und Freigabe dürfen diesen Lauf nicht abschalten
+            $this->WriteAttributeInteger('PowerByAuto', 0);
+        } else {
+            $this->AfterPowerOff();
+        }
+        $this->UpdateTimer();
+        return true;
     }
 
     private function SetRegActive(bool $on): void
@@ -398,10 +491,12 @@ class SamsungKlima extends IPSModule
             $this->Regulate();
             return;
         }
-        if (!(bool) $this->GetValueSafe('RegActive', false)) {
-            $this->EnsureOff();
-        } else {
+        if ((bool) $this->GetValueSafe('RegActive', false)) {
             $this->Regulate();   // Soll-Absenkung fällt weg, Regelung läuft weiter
+        } elseif ($this->ReadAttributeInteger('PowerByAuto') === 1) {
+            $this->EnsureOff();  // nur einen Lauf abschalten, den die PV-Freigabe gestartet hat
+        } else {
+            $this->RestoreComfortSetpoint();   // Handlauf bleibt an
         }
     }
 
@@ -411,10 +506,19 @@ class SamsungKlima extends IPSModule
         // Ist jemand im Raum, wird nicht hart geschaltet. Ein besetzter Raum
         // soll nicht im Takt der Wolken an- und ausgehen; die PV-Freigabe wirkt
         // dann nur noch über den Sollwert – und auch das nur, wenn die
-        // Raumregelung ohnehin läuft.
+        // Raumregelung ohnehin läuft. Einen Handlauf übernimmt die PV-Freigabe
+        // ebenfalls nicht, sonst überschreibt sie den Soll aus der Visu.
         return $this->ReadPropertyBoolean('PVForceRegulation')
             && !$this->Presence()
+            && !$this->ManualRun()
             && $this->PVActive();
+    }
+
+    /** Läuft das Gerät, weil jemand es von Hand eingeschaltet hat (Visu/Fernbedienung)? */
+    private function ManualRun(): bool
+    {
+        return (bool) $this->GetValueSafe('Power', false)
+            && $this->ReadAttributeInteger('PowerByAuto') === 0;
     }
 
     /** Ist der Raum belegt? Ohne hinterlegten Melder: nein. */
@@ -452,19 +556,33 @@ class SamsungKlima extends IPSModule
 
     public function Regulate()
     {
+        // Fenster zuerst – in jedem Betrieb, auch im Handbetrieb und bei
+        // Anwesenheit. Der Timer ruft Regulate() dafür auch ohne Regelung auf,
+        // damit der Schutz nicht allein an der Fenster-Nachricht hängt.
+        if ($this->WindowOpen()) {
+            if ((bool) $this->GetValueSafe('Power', false)) {
+                $this->WindowGuard();
+            }
+            return;
+        }
+        // Abwesend: kein Automatik-Lauf. Ein Handlauf (z. B. aus der Visu von
+        // unterwegs vorgekühlt) darf weiterlaufen; das Aus beim Verlassen des
+        // Hauses erledigt AwayGuard() auf der Flanke.
+        if ($this->Away() && !$this->ManualRun()) {
+            $this->EnsureOff();
+            return;
+        }
+
         // Master-Schalter: Regelung nur, wenn die Variable "Regelung aktiv" an ist.
         // Ausnahme Vorkühlen: Mit PVForceRegulation übernimmt eine anliegende
         // PV-Freigabe die Rolle des Master-Schalters, damit auch ein Raum ohne
-        // Handregelung den Überschuss aufnehmen kann.
+        // Handregelung den Überschuss aufnehmen kann. Handbetrieb (beides aus)
+        // ist ausdrücklich frei von der globalen Freigabe.
         if (!(bool) $this->GetValueSafe('RegActive', false) && !$this->PVRegulates()) {
             return;
         }
 
-        // Sperren, die sofort ausschalten: Fenster offen, keine globale Freigabe
-        if ($this->WindowOpen()) {
-            $this->EnsureOff();
-            return;
-        }
+        // Sperre, die sofort ausschaltet: keine globale Freigabe
         $rel = $this->ReadPropertyInteger('ReleaseVarID');
         if ($rel > 0 && IPS_VariableExists($rel) && !GetValue($rel)) {
             if ($this->ReadPropertyBoolean('TurnOffWhenInactive')) {
@@ -500,8 +618,8 @@ class SamsungKlima extends IPSModule
             if ($powerOn) {
                 // läuft: Soll nachführen + Sensor-Offset langsam trimmen (kein Takten)
                 $this->WriteAttributeInteger('AutoArmed', 0);
-                $this->UpdateBias($ist);
-                $this->WriteSamsungSoll($this->ComputeSamsungSoll($target));
+                $this->UpdateBias($ist, $target);
+                $this->WriteRegSoll($this->ComputeSamsungSoll($target));
             } elseif ($ist < $target + $restart) {
                 // unter der Einschaltschwelle → für die nächste Überschreitung scharf
                 // stellen (ein Hand-Aus über der Schwelle bleibt dagegen entschärft).
@@ -509,7 +627,7 @@ class SamsungKlima extends IPSModule
             } elseif ((bool) $this->ReadAttributeInteger('AutoArmed') && $canToggle) {
                 // steigende Flanke über Soll+1 K UND scharf → wieder einschalten
                 $this->WriteAttributeInteger('BiasLast', time());
-                $this->WriteSamsungSoll($this->ComputeSamsungSoll($target));
+                $this->WriteRegSoll($this->ComputeSamsungSoll($target));
                 $this->RegulateSwitch(true);
                 $this->WriteAttributeInteger('AutoArmed', 0);
             }
@@ -553,8 +671,43 @@ class SamsungKlima extends IPSModule
         $this->WriteAttributeFloat('LastSollWritten', $ss);
     }
 
-    /** Langsames I-Trim: treibt die Wandtemperatur auf den Wand-Soll (Sensor-Offset). */
-    private function UpdateBias(float $ist): void
+    /** Geräte-Soll aus der Regelung – beim Abschalten wird der Komfort-Soll zurückgeschrieben. */
+    private function WriteRegSoll(float $ss): void
+    {
+        $this->WriteAttributeInteger('SollByReg', 1);
+        $this->WriteSamsungSoll($ss);
+    }
+
+    /**
+     * Nach einem Automatik-Lauf den Kühl-Soll wieder ans Gerät und in den
+     * Wunsch-Soll schreiben. Sonst bleibt der abgesenkte Geräte-Soll (bis 18 °C)
+     * stehen und das nächste Einschalten aus der Visu kühlt darauf.
+     */
+    private function RestoreComfortSetpoint(): void
+    {
+        if ($this->ReadAttributeInteger('SollByReg') !== 1) {
+            return;
+        }
+        $this->WriteAttributeInteger('SollByReg', 0);
+        $v = round($this->ClampSetpoint($this->CurrentSoll()) * 2) / 2;
+        $this->WriteKNX('Setpoint', $v);
+        $this->WriteAttributeFloat('LastSollWritten', $v);
+        $this->SetValueIfChanged('Setpoint', $v);
+    }
+
+    /** Aufräumen nach jedem Aus: Bias verwerfen, Herkunft vergessen, Komfort-Soll zurück. */
+    private function AfterPowerOff(): void
+    {
+        // Der Bias gilt nur für den laufenden Betrieb. Bis Build 42 blieb er
+        // stehen, jeder neue Lauf startete auf Anschlag (Geräte-Soll 18 °C).
+        $this->WriteAttributeFloat('Bias', 0.0);
+        $this->WriteAttributeInteger('BiasLast', 0);
+        $this->WriteAttributeInteger('PowerByAuto', 0);
+        $this->RestoreComfortSetpoint();
+    }
+
+    /** Langsames I-Trim: treibt die Wandtemperatur auf das Regelziel (Sensor-Offset). */
+    private function UpdateBias(float $ist, float $target): void
     {
         if (!$this->ReadPropertyBoolean('BiasEnabled')) {
             return;
@@ -569,7 +722,7 @@ class SamsungKlima extends IPSModule
         if ($dtMin <= 0) {
             return;
         }
-        $err  = $ist - $this->CurrentSoll();   // >0 = zu warm → Samsung-Soll absenken
+        $err  = $ist - $target;   // >0 = zu warm → Samsung-Soll absenken
         $bias = $this->ReadAttributeFloat('Bias') + $this->ReadPropertyFloat('BiasKi') * $err * $dtMin;
         $lim  = $this->ReadPropertyFloat('BiasLimit');
         // Bias nur nach unten (kälter als Ziel): [0, Limit] – nie über den Regelungs-Soll.
@@ -587,10 +740,12 @@ class SamsungKlima extends IPSModule
             IPS_Sleep(250);
             $this->WriteKNX('Power', true);
             $this->SetValueIfChanged('Power', true);
+            $this->WriteAttributeInteger('PowerByAuto', 1);
         } else {
             $this->WriteKNX('Power', false);
             $this->SetValueIfChanged('Power', false);
             $this->WriteAttributeFloat('LastSollWritten', -999.0);
+            $this->AfterPowerOff();
         }
         $this->MarkPowerPending($on);
         $this->WriteAttributeInteger('LastToggle', time());
@@ -670,7 +825,45 @@ class SamsungKlima extends IPSModule
             $this->WriteAttributeInteger('AutoArmed', 1); // Sperre-Aus: nach Freigabe wieder aufnehmen
             $this->WriteAttributeInteger('LastToggle', time());
             $this->WriteAttributeFloat('LastSollWritten', -999.0);
+            $this->AfterPowerOff();
         }
+    }
+
+    /**
+     * Abwesenheits-Wächter, nur auf der Flanke „jetzt abwesend": dann aus, auch
+     * einen Handlauf. Ein danach von unterwegs gestarteter Handlauf bleibt an –
+     * die Abwesenheitsvariable wird oft zyklisch aktualisiert und dürfte ihn
+     * sonst bei jedem Update wieder abschalten.
+     */
+    private function AwayGuard(): void
+    {
+        $away = $this->Away() ? 1 : 0;
+        $last = $this->ReadAttributeInteger('LastAway');
+        $this->WriteAttributeInteger('LastAway', $away);
+        if ($away === 1 && $last !== 1) {
+            if ((bool) $this->GetValueSafe('Power', false)) {
+                $this->LogMessage('Abwesend: Klima aus', KL_MESSAGE);
+            }
+            $this->EnsureOff();
+            return;
+        }
+        $this->Regulate();
+    }
+
+    /** Ist niemand zuhause? Ohne hinterlegte Variable: nein. */
+    private function Away(): bool
+    {
+        if (!$this->VarConfigured('AwayVarID')) {
+            return false;
+        }
+        $v = (bool) GetValue($this->ReadPropertyInteger('AwayVarID'));
+        return $this->ReadPropertyBoolean('AwayInverted') ? !$v : $v;
+    }
+
+    private function VarConfigured(string $prop): bool
+    {
+        $id = $this->ReadPropertyInteger($prop);
+        return $id > 0 && IPS_VariableExists($id);
     }
 
     /**
@@ -692,6 +885,7 @@ class SamsungKlima extends IPSModule
                 $this->WriteAttributeInteger('AutoArmed', 1); // Fenster-Aus: nach Schließen wieder aufnehmen
                 $this->WriteAttributeInteger('LastWindowOff', $now);
                 $this->WriteAttributeInteger('LastToggle', $now);
+                $this->AfterPowerOff();
             }
         } else {
             $this->Regulate();
@@ -715,6 +909,10 @@ class SamsungKlima extends IPSModule
         if ($this->PVActive()) {
             $tiefer = max($this->ReadPropertyFloat('PVMinTemp'),
                           $soll - $this->ReadPropertyFloat('PVOffset'));
+            // Auch beim Vorkühlen Abstand zum Heiz-Soll halten
+            if ($this->VarConfigured('ExtSetpointVarID')) {
+                $tiefer = max($tiefer, $this->WallSoll() + self::HEAT_COOL_GAP);
+            }
             // Vorkühlen darf nur absenken: liegt der Wunsch-Soll bereits unter der
             // Untergrenze, bleibt er stehen statt angehoben zu werden.
             $soll = min($soll, $tiefer);
@@ -792,12 +990,27 @@ class SamsungKlima extends IPSModule
         return true;
     }
 
-    /** Ziel-Soll: Soll vom KNX-Wandthermostat (falls gewählt), sonst Modul-Sollwert. */
+    /**
+     * Kühl-Soll. Mit Wandthermostat ist dessen Wert ein HEIZ-Soll – gekühlt wird
+     * erst darüber (Heiz-Soll + CoolOffset, mindestens CoolMin), sonst heizt und
+     * kühlt derselbe Raum gleichzeitig. Ohne Wandthermostat: Modul-Sollwert.
+     */
     private function CurrentSoll(): float
     {
-        $ext = $this->ReadPropertyInteger('ExtSetpointVarID');
-        if ($ext > 0 && IPS_VariableExists($ext)) {
-            $v = (float) GetValue($ext);
+        if ($this->VarConfigured('ExtSetpointVarID')) {
+            $v = (float) GetValue($this->ReadPropertyInteger('ExtSetpointVarID'));
+            if ($v >= 5 && $v <= 40) {
+                return max($this->ReadPropertyFloat('CoolMin'), $v + $this->ReadPropertyFloat('CoolOffset'));
+            }
+        }
+        return (float) $this->GetValueSafe('Setpoint', 24.0);
+    }
+
+    /** Soll des Wandthermostats (Heiz-Soll) unverändert, sonst Modul-Sollwert. */
+    private function WallSoll(): float
+    {
+        if ($this->VarConfigured('ExtSetpointVarID')) {
+            $v = (float) GetValue($this->ReadPropertyInteger('ExtSetpointVarID'));
             if ($v >= 5 && $v <= 40) {
                 return $v;
             }
@@ -805,12 +1018,17 @@ class SamsungKlima extends IPSModule
         return (float) $this->GetValueSafe('Setpoint', 24.0);
     }
 
-    /** Regel-Timer je nach "Regelung aktiv" + Intervall/PV setzen. */
+    /**
+     * Regel-Timer setzen. Läuft auch ohne Regelung, sobald Fenster oder
+     * Abwesenheit hinterlegt sind – Regulate() prüft beide dann zyklisch,
+     * unabhängig davon, ob die Nachricht der Variablen ankommt.
+     */
     private function UpdateTimer(): void
     {
         $iv  = $this->ReadPropertyInteger('RegInterval');
         $reg = (bool) $this->GetValueSafe('RegActive', false) || $this->PVRegulates();
-        $need = $reg && ($iv > 0 || $this->ReadPropertyBoolean('PVEnabled'));
+        $guard = $this->VarConfigured('WindowVarID') || $this->VarConfigured('AwayVarID');
+        $need = ($reg && ($iv > 0 || $this->ReadPropertyBoolean('PVEnabled'))) || ($guard && $iv > 0);
         $sec = $iv > 0 ? $iv : 60;
         $this->SetTimerInterval('RegTimer', $need ? $sec * 1000 : 0);
     }
@@ -890,7 +1108,7 @@ class SamsungKlima extends IPSModule
         if ($ist === null) {
             return;
         }
-        $soll = $this->CurrentSoll();
+        $soll = $this->WallSoll();   // Anzeige am Taster bezieht sich auf dessen eigenen Soll
         $margin = $this->ReadPropertyFloat('WarmMargin');
 
         $last = $this->ReadAttributeInteger('LastWarm'); // -1 unbekannt, 0 kalt, 1 warm
@@ -925,14 +1143,26 @@ class SamsungKlima extends IPSModule
             case 'Power':
                 $b = $this->toBool($value);
                 $pp = $this->ReadAttributeInteger('PendingPower');
+                $confirmed = false;
                 if ($pp !== -1 && time() < $this->ReadAttributeInteger('PendingUntil')) {
                     if ($b === ($pp === 1)) {
                         $this->WriteAttributeInteger('PendingPower', -1); // Befehl bestätigt
+                        $confirmed = true;
                     } else {
                         break; // verspätete Gegenmeldung im Settle-Fenster → Anzeige NICHT umwerfen
                     }
                 }
+                $was = (bool) $this->GetValueSafe('Power', false);
                 $this->SetValueIfChanged('Power', $b);
+                if (!$confirmed && $b !== $was) {
+                    // Am Gerät geschaltet (Fernbedienung): ein ist Handbetrieb,
+                    // aus räumt auf wie jedes andere Aus.
+                    if ($b) {
+                        $this->WriteAttributeInteger('PowerByAuto', 0);
+                    } else {
+                        $this->AfterPowerOff();
+                    }
+                }
                 $this->Regulate();
                 break;
             case 'Mode':
@@ -950,7 +1180,9 @@ class SamsungKlima extends IPSModule
                 // Den Wunsch-Soll nur übernehmen, wenn die Regelung ihn nicht selbst
                 // führt: im Sollwert-Folgen-Modus liegt der Geräte-Soll durch den Bias
                 // bewusst darunter, die Anzeige darf nicht dorthin nachlaufen.
-                if (!$this->SetpointManagedByReg()) {
+                // Dasselbe gilt für einen PV-Lauf ohne Regelung (SollByReg): bis
+                // Build 42 lief der Wunsch-Soll dabei auf 18 °C hinterher.
+                if (!$this->SetpointManagedByReg() && $this->ReadAttributeInteger('SollByReg') !== 1) {
                     $this->SetValueIfChanged('Setpoint', (float) $value);
                 }
                 $this->UpdateWarmCold();

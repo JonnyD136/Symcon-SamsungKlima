@@ -47,6 +47,13 @@ Zweipunktregler mit Totzone auf Basis einer frei wählbaren Ist-Quelle
 - „Regelung aktiv" ist eine schaltbare Variable → über Szenen/Zeitpläne/
   Anwesenheit steuerbar. Option „bei Inaktiv ausschalten" für Abwesenheit.
 - Anti-Takt-Sperre (Mindest-Umschaltzeit) + zyklischer Sicherheits-Check.
+- **Kühl-Soll** bei Soll vom Wandthermostat: Heiz-Soll + Offset, mindestens
+  „Kühl-Soll mindestens" (Standard +2 K / 24 °C) – Heizung und Klima arbeiten
+  nicht gegeneinander.
+- **Handbetrieb** (aus der Visu oder per Fernbedienung) ist frei von der
+  globalen Freigabe und wird von der PV-Freigabe weder übernommen noch
+  abgeschaltet. Offene Fenster schalten in jedem Betrieb ab.
+- **Abwesenheit** (optionale Variable): beim Verlassen des Hauses aus.
 
 ## Steuerlogik
 

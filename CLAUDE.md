@@ -67,6 +67,43 @@ die Module liefern ihm nur noch Schaltpunkte.
   (hier 11:00 EIN / 21:00 AUS) muss aus sein, sonst schaltet er gegen die
   PV-Steuerung.
 
+## Review-Fixes Raumgerät (Build 43, 26.09.2026)
+Befunde aus dem Anlagen-Review, Entscheidungen des Hausbesitzers: Handbetrieb
+aus der Visu ist erlaubt, Kühl-Soll eigener Wert ≥ 24 °C, bei Abwesenheit aus.
+
+- **Hochlauf:** `ApplyChanges()` bricht vor KR_READY ab. Ohne
+  `RegisterMessage(0, IPS_KERNELMESSAGE)` + KR_READY-Zweig im `MessageSink`
+  holte niemand `Discover()` nach – nach dem Neustart am 29.08. liefen alle
+  5 Räume vier Wochen ohne Poll, ohne Nachrichten, ohne Fensterwächter.
+  **Der alte „KR_READY-Guard" allein ist keine Konvention, sondern ein Bug.**
+- **Kühl-Soll:** `ExtSetpointVarID` ist der HEIZ-Soll des Wandthermostats.
+  `CurrentSoll()` = max(`CoolMin`, Heiz-Soll + `CoolOffset`), `WallSoll()` =
+  Heiz-Soll roh (nur noch Warm/Kalt-Anzeige). PV-Vorkühlen bleibt mindestens
+  `HEAT_COOL_GAP` (1 K) über dem Heiz-Soll – vorher kühlte die Klima im
+  Esszimmer auf 18 °C, während der Stellantrieb heizen wollte.
+- **Bias:** Fehler gegen das Regelziel statt gegen den Wand-Soll, und
+  `AfterPowerOff()` setzt ihn bei jedem Aus zurück. Vorher startete jeder
+  Lauf auf Anschlag (Geräte-Soll immer 18/19 °C).
+- **Herkunft des Laufs:** `PowerByAuto` (1 = Regelung/PV hat eingeschaltet).
+  PV-Ende schaltet nur eigene Läufe ab; ein Handlauf wird von der PV-Freigabe
+  weder übernommen noch abgeschaltet. Fernbedienung-Ein zählt als Hand.
+- **Komfort-Soll zurück:** `SollByReg` merkt, dass der Geräte-Soll von der
+  Regelung stammt. `RestoreComfortSetpoint()` schreibt beim Aus den Kühl-Soll
+  ans Gerät und in `Setpoint`; die Status-Rückmeldung überschreibt `Setpoint`
+  währenddessen nicht mehr (Ursache der „Handstarts auf 18 °C").
+- **Fenster in jedem Betrieb:** `Regulate()` prüft das Fenster vor allem
+  anderen, der `RegTimer` läuft auch ohne Regelung, sobald Fenster oder
+  Abwesenheit hinterlegt sind. Präsenz im Büro hebelt den Schutz nicht mehr aus.
+- **Abwesenheit** (`AwayVarID`): Flanke „abwesend" schaltet aus, auch Hand.
+  Nur auf der Flanke, damit ein von unterwegs gestarteter Handlauf zyklische
+  Updates übersteht. Automatik-Läufe starten während Abwesenheit nicht.
+- **`MigrateOnce()`** (einmalig): setzt einen auf < `CoolMin` verschmutzten
+  Wunsch-Soll auf den Kühl-Soll zurück (auch am Gerät) und übernimmt einen
+  gerade laufenden PV-Lauf als Automatik-Lauf.
+- Szenarien lokal gegen einen Symcon-Nachbau geprüft (Hochlauf, Handbetrieb,
+  Fenster per Timer, PV an/aus, Handlauf vs. PV, Abwesenheit, Fernbedienung,
+  Migration). Nicht am Gerät getestet.
+
 ## Lernen an der Wärmepumpe (Build 28)
 Die MIM liefert **keine Leistungsmessung**, nur den Kompressorstrom *einer*
 Phase. `I × 230 V` lag am Live-Datensatz um **Faktor 2,3–2,9** zu niedrig
@@ -134,7 +171,7 @@ verdächtig – erst den Datenpunkttyp prüfen, bevor man dem Wert glaubt.**
 ## FACE-Konventionen (eingehalten)
 - Klassenname = module.json-„name" ohne Leerzeichen → `SamsungKlima`
 - Timer-Callback in Prefix-Form: `SAMK_Regulate($_IPS["TARGET"])`
-- `KR_READY`-Guard in `ApplyChanges()` (Discovery erst wenn Kernel bereit)
+- `KR_READY`-Guard in `ApplyChanges()` **plus** `IPS_KERNELMESSAGE`-Handler, der `Discover()` nachholt (Build 43)
 - `SetValueIfChanged()` statt blindem `SetValue()`
 - Eigener Status via `SetStatus()` (102/201)
 - Gemeinsame Profile `SAMK.Mode` / `SAMK.Fan` / `SAMK.Setpoint`
