@@ -117,7 +117,13 @@ Heizstab fehlen und stehen in keinem Register. Also gelernt statt geraten:
   0,2-Quantil und trieb den Median bis Oktober auf 4711 W (Archiv mit Median:
   3425 W). Der Manager verlangte damit 5,2 kW Überschuss – am 12., 15. und
   20.10. lag die Einspeisung bis zu 80 min über 4 kW, nie darüber, und der
-  Speicher wurde jedes Mal um 18:00 aus dem Netz geladen. Median über die letzten 10 Ladungen → `Usage` im
+  Speicher wurde jedes Mal um 18:00 aus dem Netz geladen.
+  **`LearnFromArchive()` (Build 45)** zählt jetzt wie das Live-Lernen nur
+  Messpunkte mit laufendem Verdichter (`COMP_MIN_A`) und Ventil auf Warmwasser,
+  und eine Ladung endet erst nach `CHARGE_GAP` ohne Anstieg. Vorher zerfielen
+  Ladungen beim Fühlerzittern in Stücke und Anlauf/Nachlauf zählten mit –
+  Ergebnis 2945 W / Faktor 1,58 statt real **~4,3 kW / ~2,6** (Okt. 2026).
+  Median über die letzten 10 Ladungen → `Usage` im
   Energie Manager, Verhältnis zur Modul-Schätzung → Korrekturfaktor auf
   `PowerElec`. **Achtung: das ändert den angezeigten COP** (von ~5,6 auf ~2,2 –
   der alte Wert war zu optimistisch).

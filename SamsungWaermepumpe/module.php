@@ -192,6 +192,7 @@ class SamsungWaermepumpe extends IPSModule
     private const LOAD_RING        = 15;     // Hauslast-Messpunkte für die Grundlast
     private const CHARGE_MIN_N     = 5;      // Mindest-Messpunkte für eine gültige Ladung
     private const CHARGE_MIN_K     = 3.0;    // Mindest-Temperaturhub für eine gültige Ladung
+    private const CHARGE_GAP       = 600;    // s ohne Anstieg, bis eine Archiv-Ladung als beendet gilt
 
     private const WD = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
 
@@ -939,35 +940,59 @@ class SamsungWaermepumpe extends IPSModule
         $this->WriteAttributeString('DayCounts', json_encode($zaehler));
 
         // ── Ladungen → Leistung und Korrekturfaktor ──
+        // Gezählt wird wie in TrackCharge() nur, solange der Verdichter läuft
+        // und das 3-Wegeventil auf Warmwasser steht. Über das ganze Anstiegs-
+        // fenster gemittelt kamen Anlauf und Fühler-Nachlauf mit hinein: 3208 W
+        // und Faktor 1,84 statt gemessener ~4,3 kW bei Faktor ~2,6.
         $amp   = @$this->GetIDForIdent('CompCurrent');
+        $valve = @$this->GetIDForIdent('ThreeWayValve');
         $mains = $this->ReadPropertyFloat('Mains');
+        if (!$last || !AC_GetLoggingStatus($ac, $last) || !$amp || !AC_GetLoggingStatus($ac, $amp)
+            || !$valve || !AC_GetLoggingStatus($ac, $valve)) {
+            echo "Hauslast, Verdichterstrom oder 3-Wegeventil nicht archiviert – Leistung nicht gelernt.\n";
+        }
         $ladungen = 0;
         foreach ($this->ArchiveCharges($t) as [$a, $b, $hub]) {
-            if ($hub < self::CHARGE_MIN_K || !$last || !AC_GetLoggingStatus($ac, $last)) {
+            if ($hub < self::CHARGE_MIN_K || !$last || !AC_GetLoggingStatus($ac, $last)
+                || !$amp || !AC_GetLoggingStatus($ac, $amp) || !$valve || !AC_GetLoggingStatus($ac, $valve)) {
                 continue;
             }
             $grund = $this->Quantile(array_column(AC_GetLoggedValues($ac, $last, $a - 2400, $a - 120, 0), 'Value'), 0.5);
-            $inn   = array_column(AC_GetLoggedValues($ac, $last, $a, $b, 0), 'Value');
-            if ($grund === null || count($inn) < self::CHARGE_MIN_N) {
+            if ($grund === null) {
                 continue;
             }
-            $leistung = array_sum($inn) / count($inn) - $grund;
+            // Strom und Ventil als Stufenfunktion; Startwert = letzter Wert vor $a
+            $stromR = array_reverse(AC_GetLoggedValues($ac, $amp, $a - 3600, $b + 600, 0));
+            $ventR  = array_reverse(AC_GetLoggedValues($ac, $valve, $a - 3 * 86400, $b + 600, 0));
+            $is = 0; $iv = 0; $strom = null; $ventil = null;
+            $summe = 0.0; $stromSumme = 0.0; $n = 0;
+            foreach (array_reverse(AC_GetLoggedValues($ac, $last, $a, $b + 600, 0)) as $r) {
+                while ($is < count($stromR) && $stromR[$is]['TimeStamp'] <= $r['TimeStamp']) {
+                    $strom = (float) $stromR[$is++]['Value'];
+                }
+                while ($iv < count($ventR) && $ventR[$iv]['TimeStamp'] <= $r['TimeStamp']) {
+                    $ventil = (int) $ventR[$iv++]['Value'];
+                }
+                if ($strom !== null && $strom >= self::COMP_MIN_A && $ventil === self::VALVE_DHW) {
+                    $summe += $r['Value'];
+                    $stromSumme += $strom;
+                    $n++;
+                }
+            }
+            if ($n < self::CHARGE_MIN_N) {
+                continue;
+            }
+            $leistung = $summe / $n - $grund;
             if ($leistung < 300 || $leistung > 12000) {
                 continue;
             }
             $this->PushSample('PowerSamples', round($leistung));
             $ladungen++;
 
-            if ($amp && AC_GetLoggingStatus($ac, $amp)) {
-                $a2 = array_column(AC_GetLoggedValues($ac, $amp, $a, $b, 0), 'Value');
-                $a2 = array_values(array_filter($a2, fn ($x) => $x > 0.2));
-                if ($a2) {
-                    $roh = array_sum($a2) / count($a2) * $mains;
-                    $f = $roh > 300 ? $leistung / $roh : 0;
-                    if ($f >= 0.5 && $f <= 5.0) {
-                        $this->PushSample('FactorSamples', round($f, 3));
-                    }
-                }
+            $roh = $stromSumme / $n * $mains;
+            $f = $roh > 300 ? $leistung / $roh : 0;
+            if ($f >= 0.5 && $f <= 5.0) {
+                $this->PushSample('FactorSamples', round($f, 3));
             }
         }
         $this->PublishLearned(true);
@@ -977,23 +1002,38 @@ class SamsungWaermepumpe extends IPSModule
             $this->PowerCorrection(), GetValue($this->GetIDForIdent('DHWReadyBy')));
     }
 
-    /** Ladephasen aus dem Temperaturverlauf: zusammenhängender Anstieg. */
+    /**
+     * Ladephasen aus dem Temperaturverlauf. Eine Ladung endet erst, wenn
+     * CHARGE_GAP lang nichts mehr gestiegen ist – nicht schon beim ersten
+     * Wert, der nicht steigt. Bis Build 44 zerfiel jede Ladung mit einem
+     * Fühlerzittern in Stücke; bei den Folgestücken lag die laufende WP schon
+     * im Grundlast-Fenster davor und drückte den gelernten Wert.
+     */
     private function ArchiveCharges(array $t): array
     {
-        $out = []; $von = null; $start = null;
+        $out = []; $von = null; $start = 0.0; $max = 0.0; $hoch = 0;
+        $schliessen = function () use (&$out, &$von, &$start, &$max, &$hoch) {
+            if ($von !== null && $hoch - $von > 300) {
+                $out[] = [$von, $hoch, $max - $start];
+            }
+            $von = null;
+        };
         for ($i = 1; $i < count($t); $i++) {
-            $steigt = $t[$i]['Value'] > $t[$i - 1]['Value'] + 0.05;
-            if ($steigt && $von === null) {
-                $von = $t[$i - 1]['TimeStamp'];
-                $start = $t[$i - 1]['Value'];
-            } elseif (!$steigt && $von !== null) {
-                if ($t[$i - 1]['TimeStamp'] - $von > 300) {
-                    $out[] = [$von, $t[$i - 1]['TimeStamp'], $t[$i - 1]['Value'] - $start];
+            $ts = $t[$i]['TimeStamp'];
+            if ($von !== null && $ts - $hoch > self::CHARGE_GAP) {
+                $schliessen();
+            }
+            if ($t[$i]['Value'] > $t[$i - 1]['Value'] + 0.05) {
+                if ($von === null) {
+                    $von   = $t[$i - 1]['TimeStamp'];
+                    $start = $t[$i - 1]['Value'];
+                    $max   = $start;
                 }
-                $von = null;
+                $hoch = $ts;
+                $max  = max($max, $t[$i]['Value']);
             }
         }
-        return $out;
+        return $out;                                   // eine noch laufende Ladung bleibt außen vor
     }
 
     private function Quantile(array $w, float $q): ?float
