@@ -144,6 +144,15 @@ Heizstab fehlen und stehen in keinem Register. Also gelernt statt geraten:
   wurde im Oktober an 8 von 15 Tagen um 18:00 komplett aus dem Netz geladen.
   Die Prognose (#52218, kWh) trifft die Stunde gut, unterschätzt aber die
   Höhe (25.10.: 2,2 kW erwartet, 4,2 kW erreicht).
+- **Prognose-Vertrauen (Build 47):** `ForecastTrust` (Default 80 %) – nur
+  dieser Anteil der Prognose zählt für „kommt heute noch ein Fenster?". Die
+  beste Stunde bleibt davon unberührt. Hintergrund: Abgleich der Autotune-Daten
+  aus dem Oktober 2026 – an klaren Tagen trifft die Prognose mittags, an
+  gemischten liegt sie den ganzen Tag 15–30 % zu hoch. Die Morgen-Abweichung
+  (25–55 % zu hoch) kam von einem Hindernis im Südosten und ist seit dem
+  25.10. im Prognosemodul #52218 eingetragen (`obj_direction` 55 → Schatten bis
+  Sonnen-Azimut 145°, Höhe 10 / Abstand 19 → unter 27,8°, `obj_size` 70,
+  `obj_effect` 60 – aus den Daten gefittet, nicht vermessen).
 - **`DHWPowerNow`** führt über das 3-Wegeventil nur den Warmwasser-Anteil.
   Als „aktuelle Nutzung" im Manager Pflicht, sonst zählt im Winter die
   Heizleistung als Warmwasser und der Verbraucher wird grundlos abgeworfen.

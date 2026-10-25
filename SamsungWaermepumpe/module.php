@@ -242,6 +242,10 @@ class SamsungWaermepumpe extends IPSModule
         // Prognose schlägt die Uhrzeitregel, sobald eine Instanz hinterlegt ist
         $this->RegisterPropertyInteger('ForecastInstanceID', 0);
         $this->RegisterPropertyFloat('ForecastBaseLoad', 800.0);
+        // Nur dieser Anteil der Prognose zählt beim Warten auf ein PV-Fenster:
+        // An gemischten Tagen lag sie im Oktober 2026 um 15–30 % zu hoch, und
+        // das Modul wartete auf Sonne, die nicht kam.
+        $this->RegisterPropertyInteger('ForecastTrust', 80);
         $this->RegisterPropertyString('DHWDeadline', '18:00');
         $this->RegisterPropertyFloat('DHWDeadlineTemp', 50.0);
         $this->RegisterPropertyString('DHWEndTime', '21:00');
@@ -807,6 +811,7 @@ class SamsungWaermepumpe extends IPSModule
         // „zu wenig" und es würde sofort geladen statt zu warten.
         $pcfg = json_decode(IPS_GetConfiguration($fc), true) ?: [];
         $faktor = !empty($pcfg['kwh']) ? 1000.0 : 1.0;
+        $vertrauen = min(100, max(30, $this->ReadPropertyInteger('ForecastTrust'))) / 100;
 
         $jetzt = (int) date('G');
         $fenster = null;
@@ -824,7 +829,7 @@ class SamsungWaermepumpe extends IPSModule
                 $bestW = $w;
                 $bestH = $h;
             }
-            if ($fenster === null && $w >= $noetig) {
+            if ($fenster === null && $w * $vertrauen >= $noetig) {
                 $fenster = $h;
             }
         }

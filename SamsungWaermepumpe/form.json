@@ -219,6 +219,14 @@
                     "maximum": 5000
                 },
                 {
+                    "type": "NumberSpinner",
+                    "name": "ForecastTrust",
+                    "caption": "Davon zählt beim Warten auf ein PV-Fenster",
+                    "suffix": " %",
+                    "minimum": 30,
+                    "maximum": 100
+                },
+                {
                     "type": "Label",
                     "caption": "Mit Prognose entscheidet nicht mehr die Uhr: Ist heute noch eine Stunde vorhergesagt, die Ladeleistung plus Grundlast trägt, wird gewartet. Sonst wird zur ertragreichsten verbleibenden Stunde geladen – das ist zugleich die wärmste Tageszeit, und daran hängt der COP."
                 },
