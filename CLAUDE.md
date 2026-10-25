@@ -112,7 +112,12 @@ Heizstab fehlen und stehen in keinem Register. Also gelernt statt geraten:
 
 - **Leistung:** Bei jeder Ladung Hauslast-Ø minus Grundlast (**Median** des
   Vorlauffensters – ein niedriges Quantil rechnet der WP fremde Last zu und
-  ergab 3862 statt 3558 W). Median über die letzten 10 Ladungen → `Usage` im
+  ergab 3862 statt 3558 W). **Bis Build 43 galt das nur für
+  `LearnFromArchive()`** – das Live-Lernen in `TrackCharge()` nahm weiter das
+  0,2-Quantil und trieb den Median bis Oktober auf 4711 W (Archiv mit Median:
+  3425 W). Der Manager verlangte damit 5,2 kW Überschuss – am 12., 15. und
+  20.10. lag die Einspeisung bis zu 80 min über 4 kW, nie darüber, und der
+  Speicher wurde jedes Mal um 18:00 aus dem Netz geladen. Median über die letzten 10 Ladungen → `Usage` im
   Energie Manager, Verhältnis zur Modul-Schätzung → Korrekturfaktor auf
   `PowerElec`. **Achtung: das ändert den angezeigten COP** (von ~5,6 auf ~2,2 –
   der alte Wert war zu optimistisch).

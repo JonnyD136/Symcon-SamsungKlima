@@ -1228,7 +1228,10 @@ class SamsungWaermepumpe extends IPSModule
         $last = ($vid > 0 && IPS_VariableExists($vid)) ? (float) GetValue($vid) : null;
 
         if ($an && empty($c['aktiv'])) {
-            $c = ['aktiv'=>1, 'base'=>$this->RingQuantile(0.2), 'tStart'=>$ist,
+            // Grundlast = Median wie in LearnFromArchive(). Das 0,2-Quantil stand
+            // hier bis Build 43 noch drin, rechnete der WP fremde Last zu und
+            // trieb den gelernten Wert auf 4711 W.
+            $c = ['aktiv'=>1, 'base'=>$this->RingQuantile(0.5), 'tStart'=>$ist,
                   'sum'=>0.0, 'n'=>0, 'estSum'=>0.0, 'ts'=>time()];
             $this->WriteAttributeString('Charge', json_encode($c));
             return;
