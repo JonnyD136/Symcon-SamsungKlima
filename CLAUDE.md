@@ -127,6 +127,23 @@ Heizstab fehlen und stehen in keinem Register. Also gelernt statt geraten:
   Energie Manager, Verhältnis zur Modul-Schätzung → Korrekturfaktor auf
   `PowerElec`. **Achtung: das ändert den angezeigten COP** (von ~5,6 auf ~2,2 –
   der alte Wert war zu optimistisch).
+- **Startschwelle nach Jahreszeit (Build 46):** In den Manager geht nicht die
+  gelernte Leistung, sondern `gelernt × StartShare()` – Kosinus zwischen
+  `DHWStartShareWinter` (21.12., Default 60 %) und `DHWStartShareSummer`
+  (21.06., 100 %). Im Herbst kam die Einspeisung kaum über 4,4 kW, und der
+  Speicher wurde fast täglich um 18:00 komplett aus dem Netz geladen; mittags
+  mit Teil-Netzbezug ist billiger. `ForecastPlan()` rechnet mit derselben
+  Schwelle, sonst hielte die Prognose ein Fenster für zu schwach, das der
+  Manager längst nutzt. Nachgeführt wird ab 50 W Abweichung und **nie während
+  einer Ladung** – `IPS_ApplyChanges()` am Manager setzt dessen Laufzeiten zurück.
+- **Wärmste Stunde statt 18:00 (Build 46):** `BestHourDue()` – liegt der
+  Speicher unter der Deadline-Temperatur und zeigt die Prognose heute kein
+  Fenster, lädt das Modul zur ertragreichsten verbleibenden Stunde (Grund
+  „Prognose", rastet ein bis Soll − 1 K). Vorher galt die Stundenregel nur
+  unter `DHWCriticalTemp`; bei 46–50 °C fiel der Speicher durch die Lücke und
+  wurde im Oktober an 8 von 15 Tagen um 18:00 komplett aus dem Netz geladen.
+  Die Prognose (#52218, kWh) trifft die Stunde gut, unterschätzt aber die
+  Höhe (25.10.: 2,2 kW erwartet, 4,2 kW erreicht).
 - **`DHWPowerNow`** führt über das 3-Wegeventil nur den Warmwasser-Anteil.
   Als „aktuelle Nutzung" im Manager Pflicht, sonst zählt im Winter die
   Heizleistung als Warmwasser und der Verbraucher wird grundlos abgeworfen.

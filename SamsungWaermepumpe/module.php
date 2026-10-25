@@ -256,6 +256,12 @@ class SamsungWaermepumpe extends IPSModule
         $this->RegisterPropertyFloat('DHWMinUsable', 38.0);
         $this->RegisterPropertyInteger('EnergyManagerID', 0);
         $this->RegisterPropertyString('EMConsumerName', '');
+        // Startschwelle im Manager = gelernte Leistung × Anteil, gleitend über
+        // das Jahr. Im Winter reicht der Überschuss fast nie für die volle
+        // Ladeleistung – dann lieber mit Teil-Netzbezug mittags laden als
+        // komplett aus dem Netz um 18:00.
+        $this->RegisterPropertyInteger('DHWStartShareSummer', 100);
+        $this->RegisterPropertyInteger('DHWStartShareWinter', 60);
 
         $this->RegisterAttributeString('CmdMap', '{}');
         $this->RegisterAttributeString('StatMap', '{}');
@@ -580,6 +586,9 @@ class SamsungWaermepumpe extends IPSModule
             } elseif ($imFenster && $ist < $dlTemp) {
                 $forced = true;
                 $grund  = 'Deadline';
+            } elseif ($ist < $dlTemp && $this->BestHourDue($dlMin)) {
+                $forced = true;
+                $grund  = 'Prognose';
             }
         }
         $this->WriteAttributeInteger('DHWForced', $forced ? 1 : 0);
@@ -589,9 +598,14 @@ class SamsungWaermepumpe extends IPSModule
         $want = $forced || $pv;
 
         if ($forced) {
-            $text = $grund === 'Kritisch'
-                ? sprintf('Notheizung – Speicher unter %.0f °C', $this->ReadPropertyFloat('DHWCriticalTemp'))
-                : sprintf('Nachheizen ab %02d:%02d (unter %.1f °C)', (int) ($dlMin / 60), $dlMin % 60, $dlTemp);
+            if ($grund === 'Kritisch') {
+                $text = sprintf('Notheizung – Speicher unter %.0f °C', $this->ReadPropertyFloat('DHWCriticalTemp'));
+            } elseif ($grund === 'Prognose') {
+                $text = sprintf('Heute kein PV-Fenster – lädt zur wärmsten Stunde statt um %02d:%02d',
+                    (int) ($dlMin / 60), $dlMin % 60);
+            } else {
+                $text = sprintf('Nachheizen ab %02d:%02d (unter %.1f °C)', (int) ($dlMin / 60), $dlMin % 60, $dlTemp);
+            }
         } elseif ($pv) {
             $text = 'PV-Überschuss';
         } elseif ($ist <= $this->ReadPropertyFloat('DHWCriticalTemp')) {
@@ -607,6 +621,10 @@ class SamsungWaermepumpe extends IPSModule
                     $this->ReadPropertyFloat('DHWCriticalTemp'), $plan['bestWatt'] / 1000,
                     $plan['bestHour'] ?? (int) date('G'));
             }
+        } elseif ($ist < $dlTemp && ($plan = $this->ForecastPlan()) !== null
+            && $plan['window'] === null && $plan['bestHour'] !== null) {
+            $text = sprintf('Heute kein PV-Fenster (max %.1f kW) – lädt um %02d:00',
+                $plan['bestWatt'] / 1000, $plan['bestHour']);
         } else {
             $text = 'Wartet auf PV-Überschuss';
         }
@@ -714,6 +732,29 @@ class SamsungWaermepumpe extends IPSModule
     }
 
     /**
+     * Würde der Speicher heute ohnehin über die Deadline nachgeheizt, und
+     * zeigt die Prognose kein Fenster, in dem der Überschuss die Ladung
+     * trägt? Dann zur ertragreichsten verbleibenden Stunde laden statt am
+     * Abend: Ein Teil kommt noch von der PV, und es ist zugleich die wärmste
+     * Tageszeit mit dem besten COP. Im Oktober 2026 griff die Stundenregel
+     * nur unter der kritischen Temperatur – der Speicher stand aber meist bei
+     * 46–50 °C und wurde an 8 von 15 Tagen um 18:00 komplett aus dem Netz
+     * geladen.
+     */
+    private function BestHourDue(int $dlMin): bool
+    {
+        $jetzt = (int) date('H') * 60 + (int) date('i');
+        if ($jetzt >= $dlMin) {
+            return false;                              // ab der Deadline übernimmt die Deadline
+        }
+        $plan = $this->ForecastPlan();
+        if ($plan === null || $plan['window'] !== null || $plan['bestHour'] === null || $plan['bestWatt'] <= 0) {
+            return false;
+        }
+        return (int) date('G') >= $plan['bestHour'];
+    }
+
+    /**
      * Darf jetzt notgeheizt werden? Vor der eingestellten Uhrzeit nicht: Fällt
      * der Speicher vormittags unter die kritische Marke, ist die Sonne noch
      * nicht am Zenit – sofort zu laden hieße, den Tagespeak zu verschenken und
@@ -745,7 +786,8 @@ class SamsungWaermepumpe extends IPSModule
      * Fragt das Prognosemodul, ob heute noch genug Sonne kommt.
      *
      * „Genug" heißt: eine Stunde, in der die vorhergesagte Erzeugung die
-     * gelernte Ladeleistung plus Grundlast trägt – die Prognose sagt die
+     * Startschwelle (gelernte Ladeleistung × Jahreszeit-Anteil, dieselbe wie
+     * im Energie Manager) plus Grundlast trägt – die Prognose sagt die
      * Erzeugung, nicht den Überschuss, das Haus zieht davon ab.
      *
      * @return array{needed:float,window:?int,bestHour:?int,bestWatt:int}|null
@@ -757,7 +799,7 @@ class SamsungWaermepumpe extends IPSModule
         if ($fc <= 0 || !IPS_InstanceExists($fc) || !function_exists('pvFC_getHourForecast')) {
             return null;
         }
-        $noetig = ($this->MedianOf('PowerSamples') ?? self::DHW_POWER_FALLBACK)
+        $noetig = ($this->MedianOf('PowerSamples') ?? self::DHW_POWER_FALLBACK) * $this->StartShare()
             + $this->ReadPropertyFloat('ForecastBaseLoad');
 
         // Das Prognosemodul liefert wahlweise Wh oder kWh – die Einheit steht in
@@ -1476,6 +1518,18 @@ class SamsungWaermepumpe extends IPSModule
         return (float) $w[(int) (count($w) * $q)];
     }
 
+    /**
+     * Anteil der gelernten Ladeleistung, ab dem der Manager starten darf:
+     * Winteranteil am 21.12., Sommeranteil am 21.06., dazwischen Kosinus.
+     */
+    private function StartShare(): float
+    {
+        $sommer = min(100, max(30, $this->ReadPropertyInteger('DHWStartShareSummer')));
+        $winter = min($sommer, max(30, $this->ReadPropertyInteger('DHWStartShareWinter')));
+        $phase  = 2 * M_PI * ((int) date('z') - 354) / 365;
+        return ($winter + ($sommer - $winter) * (1 - cos($phase)) / 2) / 100;
+    }
+
     /** Gelernte Werte in die Anzeigevariablen und in den Energiemanager schreiben. */
     private function PublishLearned(bool $emImmer = false): void
     {
@@ -1483,10 +1537,16 @@ class SamsungWaermepumpe extends IPSModule
         if ($w !== null) {
             $this->SetValueIfChanged('DHWPowerLearned', (float) $w);
             // Der Takt läuft jede Minute – den Manager nur anfassen, wenn sich
-            // der gelernte Wert überhaupt bewegt hat.
-            if ($emImmer || abs($w - $this->ReadAttributeFloat('LastPushed')) > 0.5) {
-                $this->PushUsageToEnergyManager((float) $w, $emImmer);
-                $this->WriteAttributeFloat('LastPushed', (float) $w);
+            // die Schwelle um mindestens 50 W bewegt hat (die Jahreszeit rückt
+            // sie um ~10 W pro Tag weiter), und nie während einer Ladung:
+            // IPS_ApplyChanges() am Manager setzt dessen Laufzeiten zurück.
+            $anteil = $this->StartShare();
+            $ziel   = round($w * $anteil);
+            if ($emImmer || (abs($ziel - $this->ReadAttributeFloat('LastPushed')) >= 50 && !$this->DHWRunning())) {
+                $this->PushUsageToEnergyManager($ziel, true);
+                $this->WriteAttributeFloat('LastPushed', $ziel);
+                $this->LogMessage(sprintf('Startschwelle Warmwasser: %.0f W gelernt × %.0f %% = %.0f W',
+                    $w, $anteil * 100, $ziel), KL_MESSAGE);
             }
         }
         $this->SetValueIfChanged('PowerCorrLearned', round($this->PowerCorrection(), 2));

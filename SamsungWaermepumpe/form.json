@@ -323,6 +323,26 @@
                     "type": "ValidationTextBox",
                     "name": "EMConsumerName",
                     "caption": "Name der Verbraucher-Zeile dort (exakt wie eingetragen)"
+                },
+                {
+                    "type": "Label",
+                    "caption": "Startschwelle im Manager = gelernte Ladeleistung × Anteil, gleitend zwischen Sommer (21.06.) und Winter (21.12.)"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "DHWStartShareSummer",
+                    "caption": "Anteil im Sommer",
+                    "suffix": " %",
+                    "minimum": 30,
+                    "maximum": 100
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "DHWStartShareWinter",
+                    "caption": "Anteil im Winter",
+                    "suffix": " %",
+                    "minimum": 30,
+                    "maximum": 100
                 }
             ]
         }
