@@ -153,6 +153,18 @@ Heizstab fehlen und stehen in keinem Register. Also gelernt statt geraten:
   25.10. im Prognosemodul #52218 eingetragen (`obj_direction` 55 → Schatten bis
   Sonnen-Azimut 145°, Höhe 10 / Abstand 19 → unter 27,8°, `obj_size` 70,
   `obj_effect` 60 – aus den Daten gefittet, nicht vermessen).
+- **PV-Ladung heizt höher (Build 48):** `DHWPVSetpoint` (Default 60 °C, 0 =
+  aus). `ManagePVBoost()` hebt den Sollwert nur während einer reinen PV-Ladung
+  an (nicht bei Kritisch/Deadline/Prognose) und stellt danach den gemerkten
+  Wert (`DHWNormalSetpoint`) zurück. Anlass 26.10.2026: Mittags per PV auf
+  55 °C, um 17:30 große Zapfung, 18:00 auf 46 °C und komplett aus dem Netz
+  nachgeheizt. Über 56 °C war der Speicher vorher nie – ob der Verdichter
+  60 °C ohne **Heizstab** schafft, war unbekannt. Deshalb lernt das Modul die
+  Grenze (`BoostLimit`): Heizstab/Ersatzheizung springt an, oder 20 min kein
+  Anstieg über dem Normal-Soll → Anhebung endet, künftige werden gedeckelt.
+  `PushFullToEnergyManager()` führt die „Speicher voll"-Bedingung im Manager
+  mit (Ziel − 1 K, ohne Boost Normal-Soll − 2 K), nie während einer Ladung.
+  Ein Sollwert von Hand beendet die Buchführung, der neue Wert gilt als normal.
 - **`DHWPowerNow`** führt über das 3-Wegeventil nur den Warmwasser-Anteil.
   Als „aktuelle Nutzung" im Manager Pflicht, sonst zählt im Winter die
   Heizleistung als Warmwasser und der Verbraucher wird grundlos abgeworfen.

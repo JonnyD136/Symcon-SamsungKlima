@@ -351,6 +351,14 @@
                     "suffix": " %",
                     "minimum": 30,
                     "maximum": 100
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "DHWPVSetpoint",
+                    "caption": "Warmwasser-Soll bei PV-Ladung (0 = aus; Obergrenze ohne Heizstab lernt das Modul)",
+                    "suffix": " °C",
+                    "minimum": 0,
+                    "maximum": 70
                 }
             ]
         }

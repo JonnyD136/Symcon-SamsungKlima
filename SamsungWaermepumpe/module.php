@@ -266,6 +266,10 @@ class SamsungWaermepumpe extends IPSModule
         // komplett aus dem Netz um 18:00.
         $this->RegisterPropertyInteger('DHWStartShareSummer', 100);
         $this->RegisterPropertyInteger('DHWStartShareWinter', 60);
+        // PV-Ladungen heizen höher als der normale Sollwert – der Speicher als
+        // Wärmespeicher für Überschuss. 0 = aus. Wie hoch der Verdichter ohne
+        // Heizstab kommt, lernt das Modul selbst (Attribut BoostLimit).
+        $this->RegisterPropertyInteger('DHWPVSetpoint', 60);
 
         $this->RegisterAttributeString('CmdMap', '{}');
         $this->RegisterAttributeString('StatMap', '{}');
@@ -284,6 +288,11 @@ class SamsungWaermepumpe extends IPSModule
         $this->RegisterAttributeFloat('LastTemp', 0.0);
         $this->RegisterAttributeInteger('LastTempTs', 0);
         $this->RegisterAttributeFloat('LastPushed', 0.0);
+        $this->RegisterAttributeFloat('DHWNormalSetpoint', 0.0);  // > 0 = PV-Anhebung aktiv, Wert zum Zurückstellen
+        $this->RegisterAttributeFloat('BoostLimit', 0.0);         // gelernte Obergrenze ohne Heizstab, 0 = unbekannt
+        $this->RegisterAttributeFloat('BoostRefTemp', 0.0);
+        $this->RegisterAttributeInteger('BoostRefTs', 0);
+        $this->RegisterAttributeFloat('LastPushedFull', 0.0);
         $this->RegisterAttributeInteger('DHWWish', -1);       // zuletzt gesendeter Schaltbefehl
         $this->RegisterAttributeInteger('DHWWishSince', 0);
         $this->RegisterAttributeInteger('DHWTries', 0);
@@ -501,6 +510,9 @@ class SamsungWaermepumpe extends IPSModule
                                                   (float) $this->ReadPropertyInteger('DHWSollMax'));
                 $this->WriteKNX('DHWSetpoint', $v);
                 $this->SetValueIfChanged('DHWSetpoint', $v);
+                // Von Hand gesetzt: Das ist ab jetzt der normale Sollwert, eine
+                // laufende PV-Anhebung stellt am Ende nichts Altes zurück.
+                $this->WriteAttributeFloat('DHWNormalSetpoint', 0.0);
                 break;
             case 'Silent':
                 $this->WriteKNX('Silent', (bool) $Value);
@@ -634,7 +646,135 @@ class SamsungWaermepumpe extends IPSModule
         }
         $this->SetValueIfChanged('DHWDemandReason', $text);
 
+        $this->ManagePVBoost($pv && !$forced, $ist);
         $this->DriveDHWPower($want, $text, $ist);
+        $this->PushFullToEnergyManager();
+    }
+
+    /** Ziel einer PV-Ladung: Property, gedeckelt durch die gelernte Verdichtergrenze. 0 = aus. */
+    private function BoostTarget(): float
+    {
+        $ziel = (float) $this->ReadPropertyInteger('DHWPVSetpoint');
+        if ($ziel <= 0) {
+            return 0.0;
+        }
+        $grenze = $this->ReadAttributeFloat('BoostLimit');
+        if ($grenze > 0) {
+            $ziel = min($ziel, $grenze);
+        }
+        return min($ziel, (float) $this->ReadPropertyInteger('DHWSollMax'));
+    }
+
+    /**
+     * Während einer PV-Ladung den Sollwert auf das Boost-Ziel heben, danach
+     * zurückstellen. Über 56 °C war der Speicher vor Build 48 nie, und bei
+     * Samsung übernimmt oberhalb der Verdichtergrenze der Heizstab (COP 1).
+     * Zwei Sicherungen lernen diese Grenze: Heizstab springt an, oder der
+     * Speicher steigt 20 min lang nicht mehr. Beides beendet die Anhebung
+     * und deckelt künftige auf die erreichte Temperatur.
+     */
+    private function ManagePVBoost(bool $pvLaedt, float $ist): void
+    {
+        $normal = $this->ReadAttributeFloat('DHWNormalSetpoint');
+        $ziel   = $this->BoostTarget();
+        $soll   = (float) $this->GetValueSafe('DHWSetpoint', 50.0);
+
+        if (!$pvLaedt || $ziel <= 0) {
+            if ($normal > 0) {
+                $this->EndPVBoost($normal, 'PV-Ladung beendet');
+            }
+            return;
+        }
+        if ($normal <= 0) {
+            if ($soll >= $ziel) {
+                return;                                   // steht schon so hoch
+            }
+            $this->WriteAttributeFloat('DHWNormalSetpoint', $soll);
+            $this->WriteAttributeFloat('BoostRefTemp', $ist);
+            $this->WriteAttributeInteger('BoostRefTs', time());
+            $this->WriteKNX('DHWSetpoint', $ziel);
+            $this->SetValueIfChanged('DHWSetpoint', $ziel);
+            $this->LogMessage(sprintf('PV-Ladung: Warmwasser-Soll %.1f → %.1f °C', $soll, $ziel), KL_MESSAGE);
+            return;
+        }
+        if ((bool) $this->GetValueSafe('BoosterDHW', false) || (bool) $this->GetValueSafe('BackupHeater', false)) {
+            $this->LearnBoostLimit($ist, $normal, 'Heizstab angesprungen');
+            return;
+        }
+        if ($ist > $this->ReadAttributeFloat('BoostRefTemp') + 0.3) {
+            $this->WriteAttributeFloat('BoostRefTemp', $ist);
+            $this->WriteAttributeInteger('BoostRefTs', time());
+        } elseif ($ist > $normal && time() - $this->ReadAttributeInteger('BoostRefTs') > 1200) {
+            $this->LearnBoostLimit($ist, $normal, 'Speicher steigt seit 20 min nicht mehr');
+        }
+    }
+
+    private function LearnBoostLimit(float $ist, float $normal, string $grund): void
+    {
+        $grenze = round(max($normal + 1.0, $ist - 0.5), 1);
+        $this->WriteAttributeFloat('BoostLimit', $grenze);
+        $this->EndPVBoost($normal, sprintf('%s bei %.1f °C – PV-Ziel künftig %.1f °C', $grund, $ist, $grenze));
+    }
+
+    private function EndPVBoost(float $normal, string $grund): void
+    {
+        $this->WriteKNX('DHWSetpoint', $normal);
+        $this->SetValueIfChanged('DHWSetpoint', $normal);
+        $this->WriteAttributeFloat('DHWNormalSetpoint', 0.0);
+        $this->LogMessage(sprintf('PV-Ladung: Warmwasser-Soll zurück auf %.1f °C (%s)', $normal, $grund), KL_MESSAGE);
+    }
+
+    /**
+     * „Speicher voll“ im Energie Manager mitführen: Bedingung auf die
+     * Speichertemperatur = Boost-Ziel − 1 K (ohne Boost: normaler Soll − 2 K).
+     * Sonst hielte der Manager nach einer gelernten Deckelung eine Ladung
+     * für aktiv, die längst steht, und blockierte das Budget.
+     */
+    private function PushFullToEnergyManager(): void
+    {
+        $em   = $this->ReadPropertyInteger('EnergyManagerID');
+        $name = trim($this->ReadPropertyString('EMConsumerName'));
+        $temp = @$this->GetIDForIdent('DHWTemp');
+        if ($em <= 0 || $name === '' || !$temp || !IPS_InstanceExists($em) || $this->DHWRunning()) {
+            return;
+        }
+        $ziel = $this->BoostTarget();
+        $normal = $this->ReadAttributeFloat('DHWNormalSetpoint');
+        $voll = $ziel > 0 ? $ziel - 1.0
+            : ($normal > 0 ? $normal : (float) $this->GetValueSafe('DHWSetpoint', 54.0)) - 2.0;
+        if (abs($voll - $this->ReadAttributeFloat('LastPushedFull')) < 0.05) {
+            return;
+        }
+        $cfg = json_decode(IPS_GetConfiguration($em), true);
+        $liste = json_decode($cfg['Consumers'] ?? '[]', true) ?: [];
+        $geaendert = false;
+        foreach ($liste as &$zeile) {
+            if (($zeile['Name'] ?? '') !== $name) {
+                continue;
+            }
+            $bed = json_decode($zeile['Condition'] ?? '[]', true) ?: [];
+            foreach ($bed as &$gruppe) {
+                foreach ($gruppe['rules']['variable'] ?? [] as $k => $regel) {
+                    if ((int) ($regel['variableID'] ?? 0) === $temp && (float) $regel['value'] !== $voll) {
+                        $gruppe['rules']['variable'][$k]['value'] = $voll;
+                        $geaendert = true;
+                    }
+                }
+            }
+            unset($gruppe);
+            if ($geaendert) {
+                $zeile['Condition'] = json_encode($bed);
+                $zeile['ConditionText'] = sprintf('Speicher ist voll (ab %.0f °C)', $voll);
+            }
+        }
+        unset($zeile);
+        $this->WriteAttributeFloat('LastPushedFull', $voll);
+        if (!$geaendert) {
+            return;
+        }
+        IPS_SetProperty($em, 'Consumers', json_encode($liste, JSON_UNESCAPED_UNICODE));
+        IPS_ApplyChanges($em);
+        $this->LogMessage(sprintf('Energie Manager #%d: "%s" gilt ab %.1f °C als voll', $em, $name, $voll), KL_MESSAGE);
     }
 
     /**
