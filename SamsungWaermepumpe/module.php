@@ -270,6 +270,9 @@ class SamsungWaermepumpe extends IPSModule
         // Wärmespeicher für Überschuss. 0 = aus. Wie hoch der Verdichter ohne
         // Heizstab kommt, lernt das Modul selbst (Attribut BoostLimit).
         $this->RegisterPropertyInteger('DHWPVSetpoint', 60);
+        // Nur mit Heizstab/Ersatzheizung deren Meldung als Abbruchgrund werten.
+        // Ohne Heizstab wäre jede Meldung ein Fehlwert (0xFFFF-Falle, Build 29).
+        $this->RegisterPropertyBoolean('DHWHasHeater', false);
 
         $this->RegisterAttributeString('CmdMap', '{}');
         $this->RegisterAttributeString('StatMap', '{}');
@@ -669,9 +672,10 @@ class SamsungWaermepumpe extends IPSModule
      * Während einer PV-Ladung den Sollwert auf das Boost-Ziel heben, danach
      * zurückstellen. Über 56 °C war der Speicher vor Build 48 nie, und bei
      * Samsung übernimmt oberhalb der Verdichtergrenze der Heizstab (COP 1).
-     * Zwei Sicherungen lernen diese Grenze: Heizstab springt an, oder der
-     * Speicher steigt 20 min lang nicht mehr. Beides beendet die Anhebung
-     * und deckelt künftige auf die erreichte Temperatur.
+     * Zwei Sicherungen lernen diese Grenze: Heizstab springt an (nur mit
+     * DHWHasHeater – die Anlage hier hat keinen), oder der Speicher steigt
+     * 20 min lang nicht mehr. Beides beendet die Anhebung und deckelt
+     * künftige auf die erreichte Temperatur.
      */
     private function ManagePVBoost(bool $pvLaedt, float $ist): void
     {
@@ -697,7 +701,8 @@ class SamsungWaermepumpe extends IPSModule
             $this->LogMessage(sprintf('PV-Ladung: Warmwasser-Soll %.1f → %.1f °C', $soll, $ziel), KL_MESSAGE);
             return;
         }
-        if ((bool) $this->GetValueSafe('BoosterDHW', false) || (bool) $this->GetValueSafe('BackupHeater', false)) {
+        if ($this->ReadPropertyBoolean('DHWHasHeater')
+            && ((bool) $this->GetValueSafe('BoosterDHW', false) || (bool) $this->GetValueSafe('BackupHeater', false))) {
             $this->LearnBoostLimit($ist, $normal, 'Heizstab angesprungen');
             return;
         }

@@ -359,6 +359,11 @@
                     "suffix": " °C",
                     "minimum": 0,
                     "maximum": 70
+                },
+                {
+                    "type": "CheckBox",
+                    "name": "DHWHasHeater",
+                    "caption": "Anlage hat Heizstab/Ersatzheizung (dann bricht dessen Meldung die PV-Anhebung ab)"
                 }
             ]
         }

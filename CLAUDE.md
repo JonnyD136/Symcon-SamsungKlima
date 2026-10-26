@@ -165,6 +165,10 @@ Heizstab fehlen und stehen in keinem Register. Also gelernt statt geraten:
   `PushFullToEnergyManager()` führt die „Speicher voll"-Bedingung im Manager
   mit (Ziel − 1 K, ohne Boost Normal-Soll − 2 K), nie während einer Ladung.
   Ein Sollwert von Hand beendet die Buchführung, der neue Wert gilt als normal.
+  **Die Anlage hier hat keinen Heizstab** (Hausbesitzer, 26.10.2026). Die
+  Heizstab-Sicherung greift deshalb nur mit `DHWHasHeater` (Default aus) –
+  sonst könnte ein 0xFFFF-Fehlwert die Anhebung grundlos beenden. Es bleibt
+  die Stillstand-Erkennung: Der Verdichter hört an seiner Grenze einfach auf.
 - **`DHWPowerNow`** führt über das 3-Wegeventil nur den Warmwasser-Anteil.
   Als „aktuelle Nutzung" im Manager Pflicht, sonst zählt im Winter die
   Heizleistung als Warmwasser und der Verbraucher wird grundlos abgeworfen.
